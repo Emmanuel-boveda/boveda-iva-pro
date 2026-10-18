@@ -1,24 +1,29 @@
 import streamlit as st
 st.markdown("""
     <style>
-    /* Ocultar encabezado y barra superior */
-    header, [data-testid="stHeader"] {
+    /* Ocultar barra superior y encabezado */
+    header, [data-testid="stHeader"], #MainMenu {
         display: none !important;
         visibility: hidden !important;
         height: 0px !important;
     }
     
-    /* Ocultar pie de página ("Built with Streamlit") y botones de Fullscreen */
+    /* Ocultar pie de página, marca de agua y barra flotante inferior */
     footer, [data-testid="stFooter"], [data-testid="stStatusWidget"],
-    .stAppViewerFooter, [class*="ViewerFooter"], [data-testid="stElementToolbar"],
-    button[title="View fullscreen"], [data-testid="stDecoration"] {
+    .stAppViewerFooter, [class*="ViewerFooter"], [class*="stBottom"],
+    [data-testid="stElementToolbar"], [data-testid="stToolbar"],
+    button[title="View fullscreen"], [data-testid="stDecoration"],
+    div[class*="stActionButton"] {
         display: none !important;
         visibility: hidden !important;
         height: 0px !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
     }
 
-    /* Quitar margen inferior para que ocupe toda la pantalla */
+    /* Ajustar espacios */
     .main .block-container {
+        padding-top: 1rem !important;
         padding-bottom: 0rem !important;
     }
     </style>
