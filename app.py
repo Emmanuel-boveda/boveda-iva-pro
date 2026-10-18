@@ -1,0 +1,443 @@
+import os
+import re
+from datetime import datetime, timedelta
+import pandas as pd
+import pypdf
+from supabase import create_client, Client
+import gradio as gr
+
+# --- CONFIGURACIÓN DE SUPABASE ---
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+
+def get_supabase_client():
+    if SUPABASE_URL and SUPABASE_KEY:
+        try:
+            return create_client(SUPABASE_URL, SUPABASE_KEY)
+        except Exception:
+            return None
+    return None
+
+supabase = get_supabase_client()
+
+# --- REGISTRO DE AUDITORÍA (LOGS) ---
+def registrar_log(email, accion, detalles):
+    try:
+        if supabase:
+            supabase.table("logs_actividad").insert({
+                "fecha_hora": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "usuario_email": email,
+                "accion": accion,
+                "detalles": detalles
+            }).execute()
+    except Exception:
+        pass
+
+# --- FUNCIONES DE DATOS Y LÓGICA GENERAL ---
+def mes_a_numero(mes_str):
+    meses_dict = {
+        "Enero": 1, "Febrero": 2, "Marzo": 3, "Abril": 4, "Mayo": 5, "Junio": 6,
+        "Julio": 7, "Agosto": 8, "Septiembre": 9, "Octubre": 10, "Noviembre": 11, "Diciembre": 12
+    }
+    return meses_dict.get(str(mes_str).capitalize(), 1)
+
+def cargar_saldos(email):
+    try:
+        if not supabase:
+            return pd.DataFrame()
+        response = supabase.table("saldos_iva").select("*").eq("usuario_email", email).execute()
+        data = response.data
+        if not data:
+            return pd.DataFrame()
+        df = pd.DataFrame(data)
+        return df.rename(columns={
+            "id": "ID", "rfc": "RFC", "periodo_mes": "Periodo_Mes", "periodo_anio": "Periodo_Anio",
+            "tipo_declaracion": "Tipo_Declaracion", "num_operacion": "Num_Operacion",
+            "fecha_presentacion": "Fecha_Presentacion", "saldo_original": "Saldo_Original",
+            "saldo_disponible": "Saldo_Disponible", "estatus": "Estatus"
+        })
+    except Exception:
+        return pd.DataFrame()
+
+def cargar_historial(email):
+    try:
+        if not supabase:
+            return pd.DataFrame()
+        response = supabase.table("historial_acreditamientos").select("*").eq("usuario_email", email).execute()
+        data = response.data
+        if not data:
+            return pd.DataFrame()
+        df = pd.DataFrame(data)
+        column_map = {
+            "id": "ID", "usuario_email": "Usuario_Email", "fecha_aplicacion": "Fecha_Aplicacion",
+            "rfc": "RFC", "periodo_origen": "Periodo_Origen", "periodo_destino": "Declaracion_Aplicada_Destino",
+            "num_operacion_origen": "Num_Operacion_Origen", "saldo_anterior": "Saldo_Anterior",
+            "monto_aplicado": "Monto_Aplicado", "remanente_nuevo": "Remanente_Nuevo"
+        }
+        df = df.rename(columns=column_map)
+        if "Declaracion_Aplicada_Destino" not in df.columns:
+            df["Declaracion_Aplicada_Destino"] = "No especificado"
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+def extraer_datos_pdf(file_obj):
+    texto = ""
+    try:
+        reader = pypdf.PdfReader(file_obj)
+        for page in reader.pages:
+            texto += page.extract_text() or ""
+    except Exception:
+        return None, ""
+
+    datos = {
+        "rfc": "", "num_operacion": "", "saldo_favor": 0, "mes": "Enero",
+        "anio": 2026, "fecha_pres": datetime.now().strftime("%Y-%m-%d"),
+        "tipo_declaracion": "Normal"
+    }
+    
+    match_rfc = re.search(r"RFC[:\s]*([A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{3})", texto, re.IGNORECASE)
+    if match_rfc:
+        datos["rfc"] = match_rfc.group(1).upper()
+
+    match_op = re.search(r"Número\s+de\s+operación[:\s]*([0-9]+(?:\.[0-9]+)?)", texto, re.IGNORECASE)
+    if match_op:
+        raw_op = match_op.group(1)
+        datos["num_operacion"] = str(int(float(raw_op))) if "." in raw_op else raw_op
+
+    match_fecha = re.search(r"Fecha\s+y\s+hora\s+de\s+presentación[:\s]*(\d{2}/\d{2}/\d{4})", texto, re.IGNORECASE)
+    if match_fecha:
+        try:
+            dt_p = datetime.strptime(match_fecha.group(1), "%d/%m/%Y")
+            datos["fecha_pres"] = dt_p.strftime("%Y-%m-%d")
+        except Exception:
+            pass
+
+    match_anio = re.search(r"Ejercicio[:\s]*(\d{4})", texto, re.IGNORECASE)
+    if match_anio:
+        try:
+            datos["anio"] = int(match_anio.group(1))
+        except Exception:
+            pass
+
+    meses_validos = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+    for m in meses_validos:
+        if re.search(rf"(?:Período|Periodo)[^\n]*?{m}", texto, re.IGNORECASE):
+            datos["mes"] = m
+            break
+    else:
+        for m in meses_validos:
+            if re.search(rf"\b{m}\b", texto, re.IGNORECASE):
+                datos["mes"] = m
+                break
+
+    if re.search(r"dejar\s+sin\s+efecto", texto, re.IGNORECASE):
+        datos["tipo_declaracion"] = "Complementaria - Dejar sin Efecto"
+    elif re.search(r"complementaria|modificación|modificacion", texto, re.IGNORECASE):
+        datos["tipo_declaracion"] = "Complementaria - Modificación"
+    else:
+        datos["tipo_declaracion"] = "Normal"
+
+    if "Impuesto al Valor Agregado" in texto:
+        partes_iva = texto.split("Impuesto al Valor Agregado")
+        if len(partes_iva) > 1:
+            bloque_iva = partes_iva[1][:200]
+            match_afavor = re.search(r"A\s+favor[:\s]*([\d,]+)", bloque_iva, re.IGNORECASE)
+            if match_afavor:
+                try:
+                    datos["saldo_favor"] = int(match_afavor.group(1).replace(",", ""))
+                except Exception:
+                    pass
+
+    return datos, texto
+
+# --- LÓGICA DE EVENTOS EN INTERFAZ ---
+def login_usuario(email, password):
+    email = email.strip().lower()
+    if not email or not password:
+        return "❌ Por favor ingresa usuario y contraseña.", gr.update(visible=True), gr.update(visible=False), "", "", "", ""
+    if not supabase:
+        return "❌ Error de conexión con Supabase. Revisa las variables de entorno en Render.", gr.update(visible=True), gr.update(visible=False), "", "", "", ""
+    try:
+        res = supabase.table("usuarios_saas").select("*").eq("email", email).execute()
+        usuarios = res.data
+        if not usuarios:
+            return "❌ El usuario no existe o no tiene una cuenta registrada.", gr.update(visible=True), gr.update(visible=False), "", "", "", ""
+        
+        user_data = usuarios[0]
+        if user_data.get("password") == password:
+            if user_data.get("activo") == False:
+                return "❌ Tu suscripción está suspendida o inactiva.", gr.update(visible=True), gr.update(visible=False), "", "", "", ""
+            
+            fecha_exp = user_data.get("fecha_expiracion") or user_data.get("fecha_expiración")
+            if fecha_exp:
+                exp_date = datetime.strptime(str(fecha_exp), "%Y-%m-%d").date()
+                if datetime.now().date() > exp_date:
+                    return "❌ Tu suscripción ha expirado. Realiza tu renovación.", gr.update(visible=True), gr.update(visible=False), "", "", "", ""
+            
+            codigo_ref = user_data.get("codigo_referido")
+            if not codigo_ref:
+                base_nombre = email.split("@")[0].upper()
+                digitos_fecha = datetime.now().strftime("%d%m")
+                codigo_ref = f"{base_nombre}{digitos_fecha}"
+
+            tipo_plan = user_data.get("plan", "Plan Básico")
+            fecha_exp_str = str(fecha_exp) if fecha_exp else "Indefinida"
+            
+            registrar_log(email, "LOGIN", "Inicio de sesión exitoso en Gradio")
+
+            header_html = f"""
+            <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); padding: 18px; border-radius: 10px; color: white; margin-bottom: 15px;">
+                <h2 style="margin:0; font-size: 1.8rem;">🏛️ Bóveda IVA Pro</h2>
+                <p style="margin:5px 0 0 0; color: #e0e7ff;">
+                    Bienvenido, <b>{email}</b> | Plan: <b>{tipo_plan}</b> | ⏳ Vence: <b>{fecha_exp_str}</b> | 🎁 Tu Código: <b>{codigo_ref}</b>
+                </p>
+            </div>
+            """
+            
+            df_saldos = cargar_saldos(email)
+            rfcs = sorted(df_saldos["RFC"].unique().tolist()) if not df_saldos.empty else []
+            rfc_dropdown_update = gr.update(choices=rfcs, value=rfcs[0] if rfcs else "")
+
+            return "¡Acceso concedido!", gr.update(visible=False), gr.update(visible=True), header_html, email, tipo_plan, rfc_dropdown_update
+        else:
+            return "❌ Contraseña incorrecta.", gr.update(visible=True), gr.update(visible=False), "", "", "", ""
+    except Exception as e:
+        return f"Error al validar el acceso: {e}", gr.update(visible=True), gr.update(visible=False), "", "", "", ""
+
+def actualizar_vista_resumen(email, rfc):
+    if not rfc:
+        return "### Selecciona o registra un cliente.", pd.DataFrame(), gr.update(choices=[])
+    df = cargar_saldos(email)
+    if df.empty:
+        return "### No hay datos registrados.", pd.DataFrame(), gr.update(choices=[])
+    
+    df_cliente = df[df["RFC"] == rfc].copy()
+    if df_cliente.empty:
+        return f"### Sin registros para {rfc}", pd.DataFrame(), gr.update(choices=[])
+    
+    df_cliente["Mes_Num"] = df_cliente["Periodo_Mes"].apply(mes_a_numero)
+    df_cliente = df_cliente.sort_values(by=["Periodo_Anio", "Mes_Num"]).drop(columns=["Mes_Num"])
+    
+    hoy = datetime.now().date()
+    def evaluar_semaforo(fecha_str):
+        try:
+            f_pres = datetime.strptime(str(fecha_str), "%Y-%m-%d").date()
+            limite_prescripcion = f_pres + timedelta(days=5*365)
+            dias_restantes = (limite_prescripcion - hoy).days
+            if dias_restantes < 0:
+                return "🔴 Prescrito (>5 años)"
+            elif dias_restantes <= 365:
+                return "🔴 Riesgo Inminente (<1 año)"
+            elif dias_restantes <= 730:
+                return "🟡 Atención (1-2 años)"
+            else:
+                return "🟢 Vigente (>2 años)"
+        except Exception:
+            return "🟢 Vigente"
+
+    df_cliente["Estatus_Caducidad"] = df_cliente["Fecha_Presentacion"].apply(evaluar_semaforo)
+    total_disp = int(df_cliente[df_cliente["Estatus"] == "Vigente"]["Saldo_Disponible"].sum()) if not df_cliente.empty else 0
+    metric_html = f"<h3>SALDO TOTAL VIGENTE — {rfc}: <span style='color:#16a34a;'>${total_disp:,} MXN</span></h3>"
+    
+    ids_lista = df_cliente["ID"].tolist()
+    return metric_html, df_cliente, gr.update(choices=ids_lista, value=ids_lista[0] if ids_lista else None)
+
+def eliminar_registro_saldos(email, id_registro, confirma):
+    if not confirma:
+        return "❌ Debes confirmar la casilla para eliminar."
+    if not id_registro:
+        return "❌ Selecciona un ID válido."
+    try:
+        supabase.table("saldos_iva").delete().eq("id", int(id_registro)).execute()
+        registrar_log(email, "ELIMINAR_REGISTRO_BOVEDA", f"ID: {id_registro} eliminado")
+        return "¡Registro eliminado correctamente de la Bóveda!"
+    except Exception as e:
+        return f"Error al eliminar: {e}"
+
+def guardar_saldo_inicial(email, plan, rfc, mes, anio, num_op, fecha_pres, saldo_orig, saldo_disp):
+    rfc_limpio = rfc.upper().strip()
+    num_op_limpio = str(num_op).replace(".0", "").strip()
+    df_saldos = cargar_saldos(email)
+    lista_rfcs = sorted(df_saldos["RFC"].unique().tolist()) if not df_saldos.empty else []
+    limite_rfc = 5 if ("basico" in str(plan).lower() or "básico" in str(plan).lower()) else 999999
+    
+    if rfc_limpio not in lista_rfcs and len(lista_rfcs) >= limite_rfc:
+        return f"🚫 Has alcanzado el límite de {limite_rfc} RFCs de tu plan."
+    if not num_op_limpio:
+        return "❌ El número de operación es obligatorio."
+    try:
+        check_dup = supabase.table("saldos_iva").select("id").eq("usuario_email", email).eq("num_operacion", num_op_limpio).execute()
+        if check_dup.data:
+            return f"❌ El Número de Operación '{num_op_limpio}' ya está registrado."
+        
+        supabase.table("saldos_iva").insert({
+            "usuario_email": email,
+            "rfc": rfc_limpio,
+            "periodo_mes": mes,
+            "periodo_anio": int(anio),
+            "tipo_declaracion": "Inicial",
+            "num_operacion": num_op_limpio,
+            "fecha_presentacion": str(fecha_pres),
+            "saldo_original": float(saldo_orig),
+            "saldo_disponible": float(saldo_disp),
+            "estatus": "Vigente" if saldo_disp > 0 else "Agotado"
+        }).execute()
+        registrar_log(email, "REGISTRO_SALDO_INICIAL", f"RFC: {rfc_limpio} | Monto: ${saldo_disp} MXN")
+        return "¡Saldo inicial registrado con éxito!"
+    except Exception as e:
+        return f"Error al guardar: {e}"
+
+def procesar_pdf(file_obj):
+    if file_obj is None:
+        return "", "", 0, "Enero", 2026, datetime.now().strftime("%Y-%m-%d"), "Normal"
+    datos, _ = extraer_datos_pdf(file_obj.name if hasattr(file_obj, 'name') else file_obj)
+    if datos:
+        return (
+            datos.get("rfc", ""),
+            datos.get("num_operacion", ""),
+            datos.get("saldo_favor", 0),
+            datos.get("mes", "Enero"),
+            datos.get("anio", 2026),
+            datos.get("fecha_pres", datetime.now().strftime("%Y-%m-%d")),
+            datos.get("tipo_declaracion", "Normal")
+        )
+    return "", "", 0, "Enero", 2026, datetime.now().strftime("%Y-%m-%d"), "Normal"
+
+def guardar_declaracion_pdf(email, plan, rfc, mes, anio, tipo_dec, num_op, fecha_pres, saldo_orig, confirma_mod):
+    rfc_limpio = rfc.upper().strip()
+    num_op_limpio = str(num_op).replace(".0", "").strip()
+    df_saldos = cargar_saldos(email)
+    lista_rfcs = sorted(df_saldos["RFC"].unique().tolist()) if not df_saldos.empty else []
+    limite_rfc = 5 if ("basico" in str(plan).lower() or "básico" in str(plan).lower()) else 999999
+    
+    if rfc_limpio not in lista_rfcs and len(lista_rfcs) >= limite_rfc:
+        return "🚫 Has alcanzado el límite de RFCs de tu plan."
+    if not num_op_limpio:
+        return "❌ El número de operación es obligatorio."
+    
+    try:
+        check_dup = supabase.table("saldos_iva").select("id").eq("usuario_email", email).eq("num_operacion", num_op_limpio).execute()
+        if check_dup.data:
+            return f"❌ El Número de Operación '{num_op_limpio}' ya está registrado."
+        
+        if "Complementaria" in tipo_dec or confirma_mod:
+            supabase.table("saldos_iva").update({"estatus": "Sustituido"}).eq("usuario_email", email).eq("rfc", rfc_limpio).eq("periodo_mes", mes).eq("periodo_anio", int(anio)).execute()
+
+        supabase.table("saldos_iva").insert({
+            "usuario_email": email,
+            "rfc": rfc_limpio,
+            "periodo_mes": mes,
+            "periodo_anio": int(anio),
+            "tipo_declaracion": tipo_dec,
+            "num_operacion": num_op_limpio,
+            "fecha_presentacion": str(fecha_pres),
+            "saldo_original": float(saldo_orig),
+            "saldo_disponible": float(saldo_orig),
+            "estatus": "Vigente"
+        }).execute()
+        registrar_log(email, "CARGA_DECLARACION_PDF", f"RFC: {rfc_limpio} | Monto: ${saldo_orig} MXN")
+        return "¡Declaración registrada correctamente!"
+    except Exception as e:
+        return f"Error al registrar: {e}"
+
+def ejecutar_fifo(email, rfc, monto, mes_dest, anio_dest):
+    if not rfc:
+        return "❌ Selecciona un RFC.", pd.DataFrame()
+    if monto <= 0:
+        return "❌ Ingresa un monto mayor a cero.", pd.DataFrame()
+    
+    df_saldos = cargar_saldos(email)
+    df_vigentes = df_saldos[(df_saldos["RFC"] == rfc) & (df_saldos["Estatus"] == "Vigente")].copy()
+    if df_vigentes.empty:
+        return "❌ No hay saldos vigentes disponibles para este cliente.", pd.DataFrame()
+    
+    df_vigentes["Mes_Num"] = df_vigentes["Periodo_Mes"].apply(mes_a_numero)
+    df_vigentes = df_vigentes.sort_values(by=["Periodo_Anio", "Mes_Num"]).drop(columns=["Mes_Num"])
+    
+    if monto > df_vigentes["Saldo_Disponible"].sum():
+        return "❌ El monto excede el saldo total disponible.", pd.DataFrame()
+    
+    remanente_por_aplicar = int(monto)
+    periodo_destino_str = f"{mes_dest} {anio_dest}"
+    desglose_sat = []
+
+    try:
+        for idx, row in df_vigentes.iterrows():
+            if remanente_por_aplicar <= 0: break
+            saldo_anterior = int(row["Saldo_Disponible"])
+            saldo_original = int(row.get("Saldo_Original", saldo_anterior))
+            usar = min(saldo_anterior, remanente_por_aplicar)
+            remanente_nuevo = saldo_anterior - usar
+            remanente_por_aplicar -= usar
+            folio_limpio = str(row['Num_Operacion']).replace(".0", "")
+            nuevo_estatus = "Agotado" if remanente_nuevo == 0 else "Vigente"
+            
+            supabase.table("saldos_iva").update({
+                "saldo_disponible": float(remanente_nuevo),
+                "estatus": nuevo_estatus
+            }).eq("id", int(row["ID"])).execute()
+            
+            payload_historial = {
+                "usuario_email": email,
+                "fecha_aplicacion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "rfc": rfc,
+                "periodo_origen": f"{row['Periodo_Mes']} {row['Periodo_Anio']}",
+                "num_operacion_origen": folio_limpio,
+                "saldo_anterior": float(saldo_anterior),
+                "monto_aplicado": float(usar),
+                "remanente_nuevo": float(remanente_nuevo),
+                "periodo_destino": periodo_destino_str
+            }
+            supabase.table("historial_acreditamientos").insert(payload_historial).execute()
+            
+            desglose_sat.append({
+                "Declaración / Periodo Aplicado (Destino)": periodo_destino_str,
+                "Periodo de Origen": f"{row['Periodo_Mes']} {row['Periodo_Anio']}",
+                "Fecha de Presentación": str(row.get('Fecha_Presentacion', 'N/A')),
+                "Número de Operación / Folio SAT": folio_limpio,
+                "Saldo Original Declarado": f"${saldo_original:,} MXN",
+                "Saldo Insoluto Anterior": f"${saldo_anterior:,} MXN",
+                "Monto Acreditado / Aplicado": f"${usar:,} MXN",
+                "Saldo Remanente Posterior": f"${remanente_nuevo:,} MXN"
+            })
+
+        registrar_log(email, "EJECUCION_FIFO", f"RFC: {rfc} | Aplicado en {periodo_destino_str} | Monto: ${monto} MXN")
+        return f"¡Acreditamiento FIFO aplicado con éxito para {periodo_destino_str}!", pd.DataFrame(desglose_sat)
+    except Exception as e:
+        return f"Error al ejecutar: {e}", pd.DataFrame()
+
+def obtener_historial_vista(email, rfc):
+    df_hist = cargar_historial(email)
+    if df_hist.empty:
+        return pd.DataFrame(), gr.update(choices=[])
+    df_cliente = df_hist[df_hist["RFC"] == rfc] if rfc else df_hist
+    if df_cliente.empty:
+        return pd.DataFrame(), gr.update(choices=[])
+    
+    cols = [c for c in ["ID", "Fecha_Aplicacion", "RFC", "Periodo_Origen", "Declaracion_Aplicada_Destino", "Num_Operacion_Origen", "Saldo_Anterior", "Monto_Aplicado", "Remanente_Nuevo"] if c in df_cliente.columns]
+    df_disp = df_cliente[cols]
+    ids = df_disp["ID"].tolist()
+    return df_disp, gr.update(choices=ids, value=ids[0] if ids else None)
+
+def eliminar_historial_item(email, id_item, confirma):
+    if not confirma:
+        return "❌ Debes confirmar la casilla para eliminar."
+    if not id_item:
+        return "❌ Selecciona un ID válido."
+    try:
+        supabase.table("historial_acreditamientos").delete().eq("id", int(id_item)).execute()
+        registrar_log(email, "ELIMINAR_REGISTRO_HISTORIAL", f"ID: {id_item} eliminado")
+        return "¡Registro de historial eliminado correctamente!"
+    except Exception as e:
+        return f"Error al eliminar: {e}"
+
+def cargar_dashboard_y_expediente(email, rfc):
+    if not rfc:
+        return "0 MXN", "0 MXN", pd.DataFrame(), gr.update(choices=[]), ""
+    
+    df_saldos = cargar_saldos(email)
+    df_hist = cargar_historial(email)
+    
+    df_saldos_cli = df_saldos[df_saldos["RFC"] == rfc] if not df_saldos.empty else pd.DataFrame()
+    df_hist_cli
