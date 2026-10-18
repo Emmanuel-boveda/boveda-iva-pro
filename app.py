@@ -1,4 +1,19 @@
 import streamlit as st
+st.markdown("""
+    <style>
+    /* Ocultar barra superior y encabezado de Streamlit */
+    header, [data-testid="stHeader"] { visibility: hidden !important; height: 0px !important; }
+    
+    /* Ocultar pie de página y marca de agua */
+    footer, [data-testid="stFooter"] { visibility: hidden !important; display: none !important; }
+    
+    /* Ocultar botones flotantes, menú desplegable y botón de maximizar */
+    .stActionButton, [data-testid="stDecoration"], [data-testid="stStatusWidget"], 
+    [data-testid="stToolbar"], [data-testid="stElementToolbar"], button[title="View fullscreen"] {
+        display: none !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
 import pandas as pd
 from datetime import datetime, timedelta
 import pypdf
