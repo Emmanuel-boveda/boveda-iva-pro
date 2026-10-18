@@ -1,0 +1,9 @@
+[client]
+toolbarMode = "minimal"
+showErrorDetails = false
+
+[theme]
+base = "light"
+
+[browser]
+gatherUsageStats = false
