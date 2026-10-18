@@ -1,32 +1,32 @@
 import streamlit as st
 st.markdown("""
     <style>
-    /* Ocultar barra superior y encabezado */
-    header, [data-testid="stHeader"], #MainMenu {
-        display: none !important;
-        visibility: hidden !important;
-        height: 0px !important;
-    }
-    
-    /* Ocultar pie de página, marca de agua y barra flotante inferior */
-    footer, [data-testid="stFooter"], [data-testid="stStatusWidget"],
-    .stAppViewerFooter, [class*="ViewerFooter"], [class*="stBottom"],
-    [data-testid="stElementToolbar"], [data-testid="stToolbar"],
-    button[title="View fullscreen"], [data-testid="stDecoration"],
-    div[class*="stActionButton"] {
+    /* Ocultar encabezado, pie de página y barra flotante */
+    header, [data-testid="stHeader"], #MainMenu, footer, [data-testid="stFooter"], 
+    [data-testid="stStatusWidget"], .stAppViewerFooter, [class*="ViewerFooter"], 
+    [class*="stBottom"], [data-testid="stElementToolbar"], [data-testid="stToolbar"], 
+    button[title="View fullscreen"], [data-testid="stDecoration"], div[class*="stActionButton"] {
         display: none !important;
         visibility: hidden !important;
         height: 0px !important;
         opacity: 0 !important;
         pointer-events: none !important;
     }
-
-    /* Ajustar espacios */
     .main .block-container {
         padding-top: 1rem !important;
         padding-bottom: 0rem !important;
     }
     </style>
+
+    <script>
+    // Función para eliminar dinámicamente la barra inferior y el botón de fullscreen
+    function removeStreamlitBranding() {
+        const elements = document.querySelectorAll('footer, [data-testid="stFooter"], [data-testid="stStatusWidget"], .stAppViewerFooter, [data-testid="stElementToolbar"], [data-testid="stToolbar"], button[title="View fullscreen"], [data-testid="stDecoration"]');
+        elements.forEach(el => el.remove());
+    }
+    // Ejecutar de forma continua para asegurar que desaparezcan
+    setInterval(removeStreamlitBranding, 300);
+    </script>
 """, unsafe_allow_html=True)
 import pandas as pd
 from datetime import datetime, timedelta
