@@ -1,5 +1,6 @@
-streamlit
 pandas
 pypdf
 supabase
 gradio
+reportlab
+openpyxl
