@@ -169,7 +169,7 @@ def login_usuario(email, password):
             if user_data.get("activo") == False:
                 return "❌ Tu suscripción está suspendida o inactiva.", gr.update(visible=True), gr.update(visible=False), "", "", "", ""
             
-            fecha_exp = user_data.get("fecha_expiracion") or user_data.get("fecha_expiración")
+            fecha_exp = user_data.get("fecha_expiracion") or user_data.get("fecha_expuración")
             if fecha_exp:
                 exp_date = datetime.strptime(str(fecha_exp), "%Y-%m-%d").date()
                 if datetime.now().date() > exp_date:
@@ -432,12 +432,167 @@ def eliminar_historial_item(email, id_item, confirma):
     except Exception as e:
         return f"Error al eliminar: {e}"
 
-def cargar_dashboard_y_expediente(email, rfc):
-    if not rfc:
-        return "0 MXN", "0 MXN", pd.DataFrame(), gr.update(choices=[]), ""
+# --- CONSTRUCCIÓN DE INTERFAZ GRADIO ---
+with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
     
-    df_saldos = cargar_saldos(email)
-    df_hist = cargar_historial(email)
+    # Estados internos de sesión
+    state_email = gr.State("")
+    state_plan = gr.State("")
+
+    # Vista de Login
+    with gr.Column(visible=True) as panel_login:
+        gr.Markdown("""
+            <div style="max-width: 480px; margin: 30px auto; padding: 20px; background: white; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center;">
+                <h2 style="color: #1e3c72; margin-bottom: 5px;">🏛️ Bóveda IVA Pro</h2>
+                <p style="color: #64748b; font-size: 0.9rem;">Plataforma inteligente de gestión y acreditamiento de IVA.</p>
+            </div>
+        """)
+        with gr.Row():
+            with gr.Column(scale=1): pass
+            with gr.Column(scale=2):
+                txt_user = gr.Textbox(label="Usuario (Correo Electrónico)", placeholder="correo@ejemplo.com")
+                txt_pass = gr.Textbox(label="Contraseña de Acceso", type="password")
+                btn_ingresar = gr.Button("Iniciar Sesión", variant="primary")
+                lbl_msg = gr.Markdown()
+            with gr.Column(scale=1): pass
+
+    # Vista Principal de la App (Protegida)
+    with gr.Column(visible=False) as panel_app:
+        html_header = gr.HTML()
+        
+        with gr.Tabs():
+            with gr.TabItem("📊 Resumen y Bóveda"):
+                with gr.Row():
+                    drop_rfc_resumen = gr.Dropdown(label="Seleccionar RFC del Cliente", choices=[])
+                    btn_actualizar_resumen = gr.Button("🔄 Actualizar Datos")
+                
+                html_metricas = gr.HTML()
+                tabla_saldos_resumen = gr.DataFrame(label="Saldos Registrados en la Bóveda")
+                
+                with gr.Row():
+                    drop_id_del = gr.Dropdown(label="Seleccionar ID a Eliminar", choices=[])
+                    chk_confirma_del = gr.Checkbox(label="Confirmo que deseo eliminar este registro")
+                    btn_eliminar_reg = gr.Button("🗑️ Eliminar Registro Seleccionado", variant="stop")
+                lbl_del_res = gr.Markdown()
+
+            with gr.TabItem("📥 Carga de Declaraciones (PDF)"):
+                gr.Markdown("### Sube la declaración en formato PDF para extraer los datos automáticamente o regístrala de forma manual.")
+                with gr.Row():
+                    file_pdf = gr.File(label="Subir Declaración PDF del SAT", file_types=[".pdf"])
+                
+                with gr.Row():
+                    txt_rfc_pdf = gr.Textbox(label="RFC del Contribuyente")
+                    drop_mes_pdf = gr.Dropdown(label="Periodo (Mes)", choices=["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"], value="Enero")
+                    num_anio_pdf = gr.Number(label="Ejercicio (Año)", value=2026, precision=0)
+                
+                with gr.Row():
+                    drop_tipo_pdf = gr.Dropdown(label="Tipo de Declaración", choices=["Normal", "Complementaria - Modificación", "Complementaria - Dejar sin Efecto"], value="Normal")
+                    txt_num_op_pdf = gr.Textbox(label="Número de Operación / Folio SAT")
+                    date_pres_pdf = gr.Textbox(label="Fecha de Presentación (YYYY-MM-DD)", value=datetime.now().strftime("%Y-%m-%d"))
+                
+                with gr.Row():
+                    num_saldo_pdf = gr.Number(label="Monto del Saldo a Favor ($)", value=0)
+                    chk_mod_pdf = gr.Checkbox(label="Sustituir declaración anterior del mismo periodo")
+                
+                btn_guardar_pdf = gr.Button("💾 Registrar en Bóveda", variant="primary")
+                lbl_guardar_pdf_res = gr.Markdown()
+
+            with gr.TabItem("⚙️ Motor FIFO / Acreditamiento"):
+                gr.Markdown("### Aplica tus saldos a favor vigentes de manera cronológica (método FIFO).")
+                with gr.Row():
+                    drop_rfc_fifo = gr.Dropdown(label="Seleccionar RFC", choices=[])
+                    num_monto_fifo = gr.Number(label="Monto a Aplicar ($)")
+                with gr.Row():
+                    drop_mes_dest = gr.Dropdown(label="Periodo Destino (Mes)", choices=["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"], value="Enero")
+                    num_anio_dest = gr.Number(label="Ejercicio Destino (Año)", value=2026, precision=0)
+                
+                btn_ejecutar_fifo = gr.Button("🚀 Ejecutar Acreditamiento FIFO", variant="primary")
+                lbl_fifo_res = gr.Markdown()
+                tabla_fifo_desglose = gr.DataFrame(label="Desglose del Acreditamiento Aplicado")
+
+            with gr.TabItem("📜 Historial"):
+                with gr.Row():
+                    drop_rfc_hist = gr.Dropdown(label="Filtrar por RFC", choices=[])
+                    btn_ver_hist = gr.Button("🔍 Consultar Historial")
+                
+                tabla_historial = gr.DataFrame(label="Historial de Acreditamientos Aplicados")
+                with gr.Row():
+                    drop_id_hist = gr.Dropdown(label="ID de Historial a Eliminar", choices=[])
+                    chk_confirma_hist = gr.Checkbox(label="Confirmo eliminar este registro del historial")
+                    btn_del_hist = gr.Button("🗑️ Eliminar Historial Seleccionado", variant="stop")
+                lbl_hist_del_res = gr.Markdown()
+
+    # --- ENLACES DE EVENTOS ---
+    btn_ingresar.click(
+        fn=login_usuario,
+        inputs=[txt_user, txt_pass],
+        outputs=[lbl_msg, panel_login, panel_app, html_header, state_email, state_plan, drop_rfc_resumen]
+    )
+
+    # Actualizar pestañas y selectores al cambiar de RFC en Resumen
+    drop_rfc_resumen.change(
+        fn=actualizar_vista_resumen,
+        inputs=[state_email, drop_rfc_resumen],
+        outputs=[html_metricas, tabla_saldos_resumen, drop_id_del]
+    )
+
+    btn_actualizar_resumen.click(
+        fn=actualizar_vista_resumen,
+        inputs=[state_email, drop_rfc_resumen],
+        outputs=[html_metricas, tabla_saldos_resumen, drop_id_del]
+    )
+
+    btn_eliminar_reg.click(
+        fn=eliminar_registro_saldos,
+        inputs=[state_email, drop_id_del, chk_confirma_del],
+        outputs=[lbl_del_res]
+    ).then(
+        fn=actualizar_vista_resumen,
+        inputs=[state_email, drop_rfc_resumen],
+        outputs=[html_metricas, tabla_saldos_resumen, drop_id_del]
+    )
+
+    # Procesar PDF automáticamente
+    file_pdf.change(
+        fn=procesar_pdf,
+        inputs=[file_pdf],
+        outputs=[txt_rfc_pdf, txt_num_op_pdf, num_saldo_pdf, drop_mes_pdf, num_anio_pdf, date_pres_pdf, drop_tipo_pdf]
+    )
+
+    btn_guardar_pdf.click(
+        fn=guardar_declaracion_pdf,
+        inputs=[state_email, state_plan, txt_rfc_pdf, drop_mes_pdf, num_anio_pdf, drop_tipo_pdf, txt_num_op_pdf, date_pres_pdf, num_saldo_pdf, chk_mod_pdf],
+        outputs=[lbl_guardar_pdf_res]
+    )
+
+    # FIFO
+    drop_rfc_resumen.change(fn=lambda rfc: rfc, inputs=[drop_rfc_resumen], outputs=[drop_rfc_fifo])
     
-    df_saldos_cli = df_saldos[df_saldos["RFC"] == rfc] if not df_saldos.empty else pd.DataFrame()
-    df_hist_cli
+    btn_ejecutar_fifo.click(
+        fn=ejecutar_fifo,
+        inputs=[state_email, drop_rfc_fifo, num_monto_fifo, drop_mes_dest, num_anio_dest],
+        outputs=[lbl_fifo_res, tabla_fifo_desglose]
+    )
+
+    # Historial
+    drop_rfc_resumen.change(fn=lambda rfc: rfc, inputs=[drop_rfc_resumen], outputs=[drop_rfc_hist])
+    
+    btn_ver_hist.click(
+        fn=obtener_historial_vista,
+        inputs=[state_email, drop_rfc_hist],
+        outputs=[tabla_historial, drop_id_hist]
+    )
+
+    btn_del_hist.click(
+        fn=eliminar_historial_item,
+        inputs=[state_email, drop_id_hist, chk_confirma_hist],
+        outputs=[lbl_hist_del_res]
+    ).then(
+        fn=obtener_historial_vista,
+        inputs=[state_email, drop_rfc_hist],
+        outputs=[tabla_historial, drop_id_hist]
+    )
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 7860))
+    demo.launch(server_name="0.0.0.0", server_port=port)
