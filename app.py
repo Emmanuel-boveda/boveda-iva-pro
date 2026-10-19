@@ -91,6 +91,16 @@ def obtener_rfcs_unicos(email):
         rfcs.update(df_hist["RFC"].dropna().unique().tolist())
     return sorted(list(rfcs))
 
+def exportar_dataframe_excel(df, nombre_archivo):
+    if df.empty:
+        return None
+    ruta_archivo = f"/tmp/{nombre_archivo}.xlsx"
+    try:
+        df.to_excel(ruta_archivo, index=False, engine='openpyxl')
+        return ruta_archivo
+    except Exception:
+        return None
+
 def extraer_datos_pdf(file_obj):
     texto = ""
     try:
@@ -167,7 +177,7 @@ def login_usuario(email, password):
     if not email or not password:
         return "❌ Por favor ingresa usuario y contraseña.", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
     if not supabase:
-        return "❌ Error de conexión con Supabase. Revisa las variables de entorno en Render.", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
+        return "❌ Error de conexión con Supabase.", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
     try:
         res = supabase.table("usuarios_saas").select("*").eq("email", email).execute()
         usuarios = res.data
@@ -183,7 +193,7 @@ def login_usuario(email, password):
             if fecha_exp:
                 exp_date = datetime.strptime(str(fecha_exp), "%Y-%m-%d").date()
                 if datetime.now().date() > exp_date:
-                    return "❌ Tu suscripción ha expirado. Realiza tu renovación.", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
+                    return "❌ Tu suscripción ha expirado.", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
             
             codigo_ref = user_data.get("codigo_referido")
             if not codigo_ref:
@@ -216,9 +226,9 @@ def login_usuario(email, password):
                 header_html,
                 email,
                 tipo_plan,
-                rfc_dropdown_update,  # Resumen
-                rfc_dropdown_update,  # FIFO
-                rfc_dropdown_update   # Historial
+                rfc_dropdown_update,
+                rfc_dropdown_update,
+                rfc_dropdown_update
             )
         else:
             return "❌ Contraseña incorrecta.", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
@@ -227,14 +237,14 @@ def login_usuario(email, password):
 
 def actualizar_vista_resumen(email, rfc):
     if not rfc:
-        return "### Selecciona o registra un cliente.", pd.DataFrame(), gr.update(choices=[])
+        return "### Selecciona o registra un cliente.", pd.DataFrame(), gr.update(choices=[]), None
     df = cargar_saldos(email)
     if df.empty:
-        return "### No hay datos registrados.", pd.DataFrame(), gr.update(choices=[])
+        return "### No hay datos registrados.", pd.DataFrame(), gr.update(choices=[]), None
     
     df_cliente = df[df["RFC"] == rfc].copy()
     if df_cliente.empty:
-        return f"### Sin registros para {rfc}", pd.DataFrame(), gr.update(choices=[])
+        return f"### Sin registros para {rfc}", pd.DataFrame(), gr.update(choices=[]), None
     
     df_cliente["Mes_Num"] = df_cliente["Periodo_Mes"].apply(mes_a_numero)
     df_cliente = df_cliente.sort_values(by=["Periodo_Anio", "Mes_Num"]).drop(columns=["Mes_Num"])
@@ -261,7 +271,11 @@ def actualizar_vista_resumen(email, rfc):
     metric_html = f"<h3>SALDO TOTAL VIGENTE — {rfc}: <span style='color:#16a34a;'>${total_disp:,} MXN</span></h3>"
     
     ids_lista = df_cliente["ID"].tolist()
-    return metric_html, df_cliente, gr.update(choices=ids_lista, value=ids_lista[0] if ids_lista else None)
+    
+    # Generar archivo Excel para descarga
+    ruta_excel = exportar_dataframe_excel(df_cliente, f"Resumen_Boveda_{rfc}")
+    
+    return metric_html, df_cliente, gr.update(choices=ids_lista, value=ids_lista[0] if ids_lista else None), ruta_excel
 
 def eliminar_registro_saldos(email, id_registro, confirma):
     if not confirma:
@@ -282,13 +296,10 @@ def eliminar_cliente_completo(email, rfc_a_eliminar, confirma):
         return "❌ Selecciona un cliente / RFC válido.", gr.update(), gr.update(), gr.update()
     
     try:
-        # Eliminar saldos e historial del cliente en Supabase
         supabase.table("saldos_iva").delete().eq("usuario_email", email).eq("rfc", rfc_a_eliminar).execute()
         supabase.table("historial_acreditamientos").delete().eq("usuario_email", email).eq("rfc", rfc_a_eliminar).execute()
-        
         registrar_log(email, "ELIMINAR_CLIENTE", f"RFC: {rfc_a_eliminar} borrado completamente")
         
-        # Obtener lista actualizada de RFCs
         rfcs_actualizados = obtener_rfcs_unicos(email)
         nuevo_val = rfcs_actualizados[0] if rfcs_actualizados else ""
         upd = gr.update(choices=rfcs_actualizados, value=nuevo_val)
@@ -346,7 +357,6 @@ def guardar_declaracion_pdf(email, plan, rfc, mes, anio, tipo_dec, num_op, fecha
         }).execute()
         
         registrar_log(email, "CARGA_DECLARACION_PDF", f"RFC: {rfc_limpio} | Monto: ${saldo_orig} MXN")
-        
         rfcs_nuevos = obtener_rfcs_unicos(email)
         upd = gr.update(choices=rfcs_nuevos, value=rfc_limpio)
         
@@ -423,15 +433,19 @@ def ejecutar_fifo(email, rfc, monto, mes_dest, anio_dest):
 def obtener_historial_vista(email, rfc):
     df_hist = cargar_historial(email)
     if df_hist.empty:
-        return pd.DataFrame(), gr.update(choices=[])
+        return pd.DataFrame(), gr.update(choices=[]), None
     df_cliente = df_hist[df_hist["RFC"] == rfc] if rfc else df_hist
     if df_cliente.empty:
-        return pd.DataFrame(), gr.update(choices=[])
+        return pd.DataFrame(), gr.update(choices=[]), None
     
     cols = [c for c in ["ID", "Fecha_Aplicacion", "RFC", "Periodo_Origen", "Declaracion_Aplicada_Destino", "Num_Operacion_Origen", "Saldo_Anterior", "Monto_Aplicado", "Remanente_Nuevo"] if c in df_cliente.columns]
     df_disp = df_cliente[cols]
     ids = df_disp["ID"].tolist()
-    return df_disp, gr.update(choices=ids, value=ids[0] if ids else None)
+    
+    # Generar archivo Excel para descarga del historial
+    ruta_excel_hist = exportar_dataframe_excel(df_disp, f"Historial_Acreditamientos_{rfc if rfc else 'General'}")
+    
+    return df_disp, gr.update(choices=ids, value=ids[0] if ids else None), ruta_excel_hist
 
 def eliminar_historial_item(email, id_item, confirma):
     if not confirma:
@@ -448,7 +462,6 @@ def eliminar_historial_item(email, id_item, confirma):
 # --- CONSTRUCCIÓN DE INTERFAZ GRADIO ---
 with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
     
-    # Estados internos de sesión
     state_email = gr.State("")
     state_plan = gr.State("")
 
@@ -482,6 +495,9 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
                 html_metricas = gr.HTML()
                 tabla_saldos_resumen = gr.DataFrame(label="Saldos Registrados en la Bóveda")
                 
+                with gr.Row():
+                    btn_descargar_resumen_excel = gr.DownloadButton("📥 Descargar Resumen en Excel", variant="secondary")
+
                 with gr.Row():
                     drop_id_del = gr.Dropdown(label="Seleccionar ID de Declaración a Eliminar", choices=[])
                     chk_confirma_del = gr.Checkbox(label="Confirmo eliminar este registro individual")
@@ -537,6 +553,9 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
                 
                 tabla_historial = gr.DataFrame(label="Historial de Acreditamientos Aplicados")
                 with gr.Row():
+                    btn_descargar_historial_excel = gr.DownloadButton("📥 Descargar Historial en Excel", variant="secondary")
+
+                with gr.Row():
                     drop_id_hist = gr.Dropdown(label="ID de Historial a Eliminar", choices=[])
                     chk_confirma_hist = gr.Checkbox(label="Confirmo eliminar este registro del historial")
                     btn_del_hist = gr.Button("🗑️ Eliminar Historial Seleccionado", variant="stop")
@@ -553,13 +572,13 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
     drop_rfc_resumen.change(
         fn=actualizar_vista_resumen,
         inputs=[state_email, drop_rfc_resumen],
-        outputs=[html_metricas, tabla_saldos_resumen, drop_id_del]
+        outputs=[html_metricas, tabla_saldos_resumen, drop_id_del, btn_descargar_resumen_excel]
     )
 
     btn_actualizar_resumen.click(
         fn=actualizar_vista_resumen,
         inputs=[state_email, drop_rfc_resumen],
-        outputs=[html_metricas, tabla_saldos_resumen, drop_id_del]
+        outputs=[html_metricas, tabla_saldos_resumen, drop_id_del, btn_descargar_resumen_excel]
     )
 
     btn_eliminar_reg.click(
@@ -569,7 +588,7 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
     ).then(
         fn=actualizar_vista_resumen,
         inputs=[state_email, drop_rfc_resumen],
-        outputs=[html_metricas, tabla_saldos_resumen, drop_id_del]
+        outputs=[html_metricas, tabla_saldos_resumen, drop_id_del, btn_descargar_resumen_excel]
     )
 
     # Eliminar cliente completo
@@ -603,7 +622,7 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
     btn_ver_hist.click(
         fn=obtener_historial_vista,
         inputs=[state_email, drop_rfc_hist],
-        outputs=[tabla_historial, drop_id_hist]
+        outputs=[tabla_historial, drop_id_hist, btn_descargar_historial_excel]
     )
 
     btn_del_hist.click(
@@ -613,7 +632,7 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
     ).then(
         fn=obtener_historial_vista,
         inputs=[state_email, drop_rfc_hist],
-        outputs=[tabla_historial, drop_id_hist]
+        outputs=[tabla_historial, drop_id_hist, btn_descargar_historial_excel]
     )
 
 if __name__ == "__main__":
