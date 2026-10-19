@@ -203,6 +203,9 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
     rfc_raw = str(datos_saldo.get("RFC", "N/A"))
     rfc = re.sub(r'[^a-zA-Z0-9]', '_', rfc_raw)
     id_reg = str(datos_saldo.get("ID", "0"))
+    num_op_origen = str(datos_saldo.get("Num_Operacion", "N/A"))
+    periodo_origen_str = f"{datos_saldo.get('Periodo_Mes')} {datos_saldo.get('Periodo_Anio')}"
+    
     filename = f"./Expediente_FED_{rfc}_{id_reg}.pdf"
 
     doc = SimpleDocTemplate(
@@ -219,12 +222,13 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
     dark_text = colors.HexColor("#0f172a")
 
     style_title = ParagraphStyle('DocTitle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=15, textColor=primary_color, leading=18)
-    style_subtitle = ParagraphStyle('DocSubTitle', parent=styles['Normal'], fontName='Helvetica', fontSize=8, textColor=colors.HexColor("#475569"), leading=11)
-    style_h2 = ParagraphStyle('SectionHeader', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=10, textColor=primary_color, spaceBefore=8, spaceAfter=4, leading=12)
+    style_subtitle = ParagraphStyle('DocSubTitle', parent=styles['Normal'], fontName='Helvetica', fontSize=8.5, textColor=colors.HexColor("#475569"), leading=11)
+    style_h2 = ParagraphStyle('SectionHeader', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=10, textColor=primary_color, spaceBefore=10, spaceAfter=5, leading=12)
     style_body = ParagraphStyle('BodyDark', parent=styles['Normal'], fontName='Helvetica', fontSize=8, textColor=dark_text, leading=11)
+    style_th = ParagraphStyle('TableHead', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=8, textColor=colors.white, leading=10)
     style_badge = ParagraphStyle('BadgeText', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=8, textColor=colors.white, alignment=1)
 
-    # 1. ENCABEZADO PRINCIPAL
+    # 1. ENCABEZADO
     header_elements = []
     if logo_path and os.path.exists(logo_path):
         try:
@@ -238,7 +242,7 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
     header_table_data = [
         [
             header_elements[0],
-            Paragraph(f"<font size=8><b>DICTAMEN TÉCNICO Y EXPEDIENTE FED</b><br/>SOLICITUD DE DEVOLUCIÓN DE IVA<br/><b>FOLIO INTERNO: BIV-FED-{id_reg}</b></font>", ParagraphStyle('RHeader', parent=style_subtitle, alignment=2))
+            Paragraph(f"<font size=8><b>DICTAMEN TÉCNICO FED</b><br/>SOLICITUD DE DEVOLUCIÓN DE IVA<br/><b>ESTATUS: {datos_saldo.get('Estatus', 'EN TRÁMITE FED')}</b></font>", ParagraphStyle('RHeader', parent=style_subtitle, alignment=2))
         ]
     ]
     t_header = Table(header_table_data, colWidths=[280, 260])
@@ -248,92 +252,135 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
     story.append(HRFlowable(width="100%", thickness=1.5, color=primary_color, spaceAfter=6))
 
     # BANNER DE ESTATUS
-    banner_text = f"🔒 <b>ESTATUS: SALDO BLOQUEADO EN BÓVEDA POR TRÁMITE FED EN PROCESO DE SOLICITUD</b>" if "TRÁMITE" in str(datos_saldo.get('Estatus')).upper() else f"<b>ESTATUS DEL SALDO: {datos_saldo.get('Estatus')}</b>"
+    banner_text = f"🔒 <b>ESTATUS: SALDO BLOQUEADO EN BÓVEDA POR TRÁMITE FED EN PROCESO</b>" if "TRÁMITE" in str(datos_saldo.get('Estatus')).upper() else f"<b>ESTATUS DEL SALDO: {datos_saldo.get('Estatus')}</b>"
     banner_bg = accent_color if "TRÁMITE" in str(datos_saldo.get('Estatus')).upper() else primary_color
     t_banner = Table([[Paragraph(banner_text, style_badge)]], colWidths=[540])
     t_banner.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,-1), banner_bg),
-        ('TOPPADDING', (0,0), (-1,-1), 3),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+        ('TOPPADDING', (0,0), (-1,-1), 4),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
     ]))
     story.append(t_banner)
-    story.append(Spacer(1, 6))
+    story.append(Spacer(1, 8))
 
     monto_orig = float(datos_saldo.get("Saldo_Original", 0))
     monto_disp = float(datos_saldo.get("Saldo_Disponible", 0))
-    monto_aplicado_prev = monto_orig - monto_disp
 
-    # 2. FICHA TÉCNICA DEL SALDO Y CONTRIBUYENTE
-    story.append(Paragraph("1. IDENTIFICACIÓN Y DATOS DE LA DECLARACIÓN ORIGEN", style_h2))
+    # DATOS GENERALES
     datos_gen = [
-        [Paragraph("<b>RFC Contribuyente:</b>", style_body), Paragraph(str(rfc_raw), style_body), Paragraph("<b>Periodo / Ejercicio:</b>", style_body), Paragraph(f"{datos_saldo.get('Periodo_Mes')} {datos_saldo.get('Periodo_Anio')}", style_body)],
-        [Paragraph("<b>Tipo de Declaración:</b>", style_body), Paragraph(str(datos_saldo.get('Tipo_Declaracion', 'Normal')), style_body), Paragraph("<b>Número de Operación SAT:</b>", style_body), Paragraph(str(datos_saldo.get('Num_Operacion', 'N/A')), style_body)],
-        [Paragraph("<b>Fecha Presentación SAT:</b>", style_body), Paragraph(str(datos_saldo.get('Fecha_Presentacion', 'N/A')), style_body), Paragraph("<b>Fecha Ingreso Trámite FED:</b>", style_body), Paragraph(str(datos_saldo.get('Fecha_Ingreso_FED', datetime.now().strftime('%Y-%m-%d'))), style_body)],
-        [Paragraph("<b>Folio Trámite FED (SAT):</b>", style_body), Paragraph(str(datos_saldo.get('Folio_FED', 'En Proceso')), style_body), Paragraph("<b>Monto Devolución Solicitado:</b>", style_body), Paragraph(f"<font color='#16a34a'><b>${monto_disp:,.2f} MXN</b></font>", style_body)]
+        [Paragraph("<b>RFC Contribuyente:</b>", style_body), Paragraph(str(rfc_raw), style_body), Paragraph("<b>Folio Interno Bóveda:</b>", style_body), Paragraph(f"FED-{id_reg}", style_body)],
+        [Paragraph("<b>Periodo / Ejercicio Origen:</b>", style_body), Paragraph(periodo_origen_str, style_body), Paragraph("<b>Fecha de Ingreso SAT:</b>", style_body), Paragraph(str(datos_saldo.get('Fecha_Ingreso_FED', datetime.now().strftime('%Y-%m-%d'))), style_body)],
+        [Paragraph("<b>Tipo de Declaración:</b>", style_body), Paragraph(str(datos_saldo.get('Tipo_Declaracion', 'Normal')), style_body), Paragraph("<b>Número de Operación SAT:</b>", style_body), Paragraph(num_op_origen, style_body)],
+        [Paragraph("<b>Fecha de Presentación:</b>", style_body), Paragraph(str(datos_saldo.get('Fecha_Presentacion', 'N/A')), style_body), Paragraph("<b>Folio Trámite FED SAT:</b>", style_body), Paragraph(str(datos_saldo.get('Folio_FED', 'En Proceso')), style_body)],
+        [Paragraph("<b>Monto Original Declarante:</b>", style_body), Paragraph(f"${monto_orig:,.2f} MXN", style_body), Paragraph("<b>Monto Solicitado FED:</b>", style_body), Paragraph(f"<font color='#16a34a'><b>${monto_disp:,.2f} MXN</b></font>", style_body)]
     ]
     t_datos_gen = Table(datos_gen, colWidths=[120, 150, 120, 150])
     t_datos_gen.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,-1), light_bg),
         ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#cbd5e1")),
-        ('TOPPADDING', (0,0), (-1,-1), 3), ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+        ('TOPPADDING', (0,0), (-1,-1), 4), ('BOTTOMPADDING', (0,0), (-1,-1), 4),
     ]))
     story.append(t_datos_gen)
-    story.append(Spacer(1, 6))
+    story.append(Spacer(1, 8))
 
-    # 3. DETERMINACIÓN Y TRAZABILIDAD (MÉTODO FIFO)
-    story.append(Paragraph("2. DETERMINACIÓN ARITMÉTICA Y HISTORIAL FIFO DE APLICACIONES", style_h2))
-    fifo_data = [
-        [Paragraph("<b>Concepto / Evento</b>", style_body), Paragraph("<b>Folio / Referencia</b>", style_body), Paragraph("<b>Monto Original</b>", style_body), Paragraph("<b>Aplicaciones Prev.</b>", style_body), Paragraph("<b>Saldo Solicitado FED</b>", style_body)],
-        [Paragraph(f"Declaración {datos_saldo.get('Periodo_Mes')} {datos_saldo.get('Periodo_Anio')}", style_body), Paragraph(str(datos_saldo.get('Num_Operacion')), style_body), Paragraph(f"${monto_orig:,.2f}", style_body), Paragraph(f"${monto_aplicado_prev:,.2f}", style_body), Paragraph(f"${monto_disp:,.2f}", style_body)],
-        [Paragraph("<b>🔒 CONGELAMIENTO PARA FED</b>", style_body), Paragraph(str(datos_saldo.get('Folio_FED', 'TRÁMITE FED')), style_body), Paragraph(f"<b>${monto_orig:,.2f}</b>", style_body), Paragraph(f"<b>${monto_aplicado_prev:,.2f}</b>", style_body), Paragraph(f"<b>${monto_disp:,.2f}</b>", style_body)]
-    ]
-    t_fifo = Table(fifo_data, colWidths=[150, 110, 95, 90, 95])
-    t_fifo.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), secondary_color),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#cbd5e1")),
-        ('TOPPADDING', (0,0), (-1,-1), 3), ('BOTTOMPADDING', (0,0), (-1,-1), 3),
-    ]))
-    for i in range(5): fifo_data[0][i].style.textColor = colors.white
-    story.append(t_fifo)
-    story.append(Spacer(1, 6))
-
-    # 4. CHECKLIST DE INTEGRIDAD DOCUMENTAL FED (SAT)
-    story.append(Paragraph("3. CHECKLIST DE INTEGRIDAD DE SOPORTES Y MATERIALIDAD (FED)", style_h2))
-    chk_data = [
-        [Paragraph("<b>Documento / Anexo Requerido</b>", style_body), Paragraph("<b>Estado en Expediente</b>", style_body), Paragraph("<b>Criterio de Validación Auditoría</b>", style_body)],
-        [Paragraph("Acuse de Declaración y Sello Digital SAT", style_body), Paragraph("<font color='#16a34a'><b>INTEGRADO</b></font>", style_body), Paragraph("Validado contra base de datos oficial.", style_body)],
-        [Paragraph("Papel de Trabajo - Determinación IVA Acreditable", style_body), Paragraph("<font color='#16a34a'><b>VERIFICADO</b></font>", style_body), Paragraph("Aritmética concordante con contabilidad.", style_body)],
-        [Paragraph("Relación Analítica de CFDI (DIOT / Auxiliares)", style_body), Paragraph("<font color='#16a34a'><b>CONCILIADO</b></font>", style_body), Paragraph("Operaciones con proveedores no EFOS (Art 69-B).", style_body)],
-        [Paragraph("Estado de Cuenta y Efectiva Erogación", style_body), Paragraph("<font color='#16a34a'><b>RESPALDADO</b></font>", style_body), Paragraph("Comprobantes de pago transferencias bancarias.", style_body)]
-    ]
-    t_chk = Table(chk_data, colWidths=[200, 110, 230])
-    t_chk.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), primary_color),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#cbd5e1")),
-        ('TOPPADDING', (0,0), (-1,-1), 3), ('BOTTOMPADDING', (0,0), (-1,-1), 3),
-    ]))
-    for i in range(3): chk_data[0][i].style.textColor = colors.white
-    story.append(t_chk)
-    story.append(Spacer(1, 6))
-
-    # 5. MARCO LEGAL Y DECLARACIÓN
-    story.append(Paragraph("4. MARCO LEGAL Y DECLARACIÓN BAJO PROTESTA", style_h2))
+    # 1. FUNDAMENTACIÓN E INTEGRACIÓN JURÍDICA
+    story.append(Paragraph("1. FUNDAMENTACIÓN E INTEGRACIÓN JURÍDICA", style_h2))
     texto_ley = (
-        "El presente dictamen t&eacute;cnico respalda la solicitud de devoluci&oacute;n del saldo a favor de Impuesto al Valor Agregado "
-        "conforme a los <b>Art&iacute;culos 22 y 22-D del C&oacute;digo Fiscal de la Federaci&oacute;n (CFF)</b>, as&iacute; como el <b>Art&iacute;culo 6 de la Ley del Impuesto al Valor Agregado (LIVA)</b>. "
-        "Se manifiesta bajo protesta de decir verdad que los actos u operaciones que originaron el presente saldo derivan de actividades reales, efectivamente pagadas y debidamente bancarizadas."
+        "El presente expediente respalda la solicitud de devolución del saldo a favor de Impuesto al Valor Agregado conforme a los "
+        "<b>Artículos 22 e integración del 22-D del Código Fiscal de la Federación (CFF)</b>, así como el <b>Artículo 6 de la Ley del Impuesto al Valor Agregado (LIVA)</b>. "
+        "El saldo deriva de operaciones reales efectivamente pagadas, contando con acuse de presentación oficial ante el SAT."
     )
     story.append(Paragraph(texto_ley, style_body))
     story.append(Spacer(1, 8))
 
-    # REGISTRO Y SELLO DIGITAL
+    # 2. DETERMINACIÓN ARITMÉTICA E HISTORIAL FIFO DE APLICACIONES
+    story.append(Paragraph("2. DETERMINACIÓN ARITMÉTICA E HISTORIAL FIFO DE APLICACIONES", style_h2))
+    
+    fifo_table_data = [
+        [Paragraph("Concepto / Evento", style_th), Paragraph("Folio / Referencia SAT", style_th), Paragraph("Saldo Orig.", style_th), Paragraph("Monto Aplicado", style_th), Paragraph("Remanente Saldo", style_th)]
+    ]
+
+    # Renglón 1: Declaración Origen Inicial
+    fifo_table_data.append([
+        Paragraph(f"<b>Declaración Origen ({periodo_origen_str})</b>", style_body),
+        Paragraph(num_op_origen, style_body),
+        Paragraph(f"${monto_orig:,.2f}", style_body),
+        Paragraph("$0.00", style_body),
+        Paragraph(f"${monto_orig:,.2f}", style_body)
+    ])
+
+    # Buscar Acreditamientos Previos en el Historial de Supabase
+    remanente_corredor = monto_orig
+    total_acreditado_prev = 0
+
+    try:
+        if supabase and num_op_origen != "N/A":
+            res_hist = supabase.table("historial_acreditamientos").select("*").eq("num_operacion_origen", num_op_origen).order("id").execute()
+            if res_hist.data:
+                for reg in res_hist.data:
+                    monto_apl = float(reg.get("monto_aplicado", 0))
+                    dest_str = str(reg.get("periodo_destino", "Declaración Destino"))
+                    total_acreditado_prev += monto_apl
+                    remanente_corredor -= monto_apl
+                    
+                    fifo_table_data.append([
+                        Paragraph(f"(-) Acreditamiento aplicado en <b>{dest_str}</b>", style_body),
+                        Paragraph(str(reg.get("num_operacion_origen", num_op_origen)), style_body),
+                        Paragraph(f"${monto_orig:,.2f}", style_body),
+                        Paragraph(f"<font color='#dc2626'>-${monto_apl:,.2f}</font>", style_body),
+                        Paragraph(f"${remanente_corredor:,.2f}", style_body)
+                    ])
+    except Exception:
+        pass
+
+    # Si no se hallaron registros individuales pero hay diferencia previa
+    if total_acreditado_prev == 0 and (monto_orig - monto_disp) > 0:
+        dif_prev = monto_orig - monto_disp
+        remanente_corredor = monto_disp
+        fifo_table_data.append([
+            Paragraph("(-) Acreditamientos previos acumulados", style_body),
+            Paragraph(num_op_origen, style_body),
+            Paragraph(f"${monto_orig:,.2f}", style_body),
+            Paragraph(f"<font color='#dc2626'>-${dif_prev:,.2f}</font>", style_body),
+            Paragraph(f"${remanente_corredor:,.2f}", style_body)
+        ])
+
+    # Renglón Final: Bloqueo FED
+    fifo_table_data.append([
+        Paragraph("<b>🔒 SOLICITUD FED / BLOQUEO EN BÓVEDA</b>", style_body),
+        Paragraph(str(datos_saldo.get('Folio_FED', 'TRÁMITE FED')), style_body),
+        Paragraph(f"<b>${monto_orig:,.2f}</b>", style_body),
+        Paragraph("<b>$0.00</b>", style_body),
+        Paragraph(f"<font color='#16a34a'><b>${monto_disp:,.2f}</b></font>", style_body)
+    ])
+
+    t_fifo = Table(fifo_table_data, colWidths=[160, 100, 95, 90, 95])
+    t_fifo.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), primary_color),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#cbd5e1")),
+        ('TOPPADDING', (0,0), (-1,-1), 3.5), ('BOTTOMPADDING', (0,0), (-1,-1), 3.5),
+    ]))
+    story.append(t_fifo)
+    story.append(Spacer(1, 10))
+
+    # 3. MARCO LEGAL Y DECLARACIÓN BAJO PROTESTA
+    story.append(Paragraph("3. DECLARACIÓN BAJO PROTESTA DE DECIR VERDAD Y MARCO LEGAL", style_h2))
+    texto_protesta = (
+        "Bajo protesta de decir verdad, el contribuyente y/o su representante legal manifiestan que la información y montos aquí asentados "
+        "derivan de operaciones contables y fiscales reales, soportadas con Comprobantes Fiscales Digitales por Internet (CFDI) válidos, "
+        "efectivamente pagados y bancarizados. Así mismo, se certifica que el saldo solicitado no ha sido objeto de compensación ni acreditamiento duplicado, "
+        "cumpliendo estrictamente con las disposiciones de los artículos 22 y 22-D del Código Fiscal de la Federación (CFF)."
+    )
+    story.append(Paragraph(texto_protesta, style_body))
+    story.append(Spacer(1, 12))
+
     log_text = Paragraph(
-        f"<font size=7 color='#64748b'><b>CADENA DIGITAL BÓVEDA IVA PRO:</b> SHA256:{hash(str(datos_saldo))} | "
-        f"Fecha Emisión: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Certificado: BIVAPRO-FED-{id_reg}</font>", style_body
+        f"<font size=7 color='#64748b'><b>REGISTRO DE AUDITORÍA:</b> Generado por Bóveda IVA Pro | "
+        f"Fecha de Emisión: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | ID Certificado: BIVAPRO-FED-{id_reg}</font>", style_body
     )
     story.append(log_text)
-    story.append(Spacer(1, 15))
+    story.append(Spacer(1, 25))
 
     # FIRMAS
     firmas_data = [
