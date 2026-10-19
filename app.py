@@ -9,7 +9,7 @@ import gradio as gr
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable, KeepTogether, Image as RLImage
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable, Image as RLImage
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
@@ -102,39 +102,42 @@ def obtener_rfcs_unicos(email):
 def exportar_dataframe_excel(df, nombre_archivo):
     if df.empty:
         return None
-    ruta_archivo = f"/tmp/{nombre_archivo}.xlsx"
+    ruta_archivo = f"./{nombre_archivo}.xlsx"
     try:
         df.to_excel(ruta_archivo, index=False, engine='openpyxl')
         return ruta_archivo
     except Exception:
         return None
 
-# --- FUNCIONES DE PLANTILLA Y CARGA MASIVA DE EXCEL ---
-def generar_plantilla_excel_masiva():
-    datos_ejemplo = [
-        {
-            "RFC": "XAXX010101000",
-            "Periodo_Mes": "Enero",
-            "Periodo_Anio": 2026,
-            "Tipo_Declaracion": "Normal",
-            "Num_Operacion": "100200300",
-            "Fecha_Presentacion": "2026-02-17",
-            "Saldo_Original": 15000
-        },
-        {
-            "RFC": "XAXX010101000",
-            "Periodo_Mes": "Febrero",
-            "Periodo_Anio": 2026,
-            "Tipo_Declaracion": "Normal",
-            "Num_Operacion": "100200301",
-            "Fecha_Presentacion": "2026-03-17",
-            "Saldo_Original": 22500
-        }
-    ]
-    df_plantilla = pd.DataFrame(datos_ejemplo)
-    ruta = "/tmp/Plantilla_Carga_Masiva_BovedaIVA.xlsx"
-    df_plantilla.to_excel(ruta, index=False, engine='openpyxl')
+# --- GENERAR PLANTILLA GUÍA ESTÁTICA EN DISCO ---
+def obtener_o_crear_plantilla_excel():
+    ruta = "./Plantilla_Carga_Masiva_BovedaIVA.xlsx"
+    if not os.path.exists(ruta):
+        datos_ejemplo = [
+            {
+                "RFC": "XAXX010101000",
+                "Periodo_Mes": "Enero",
+                "Periodo_Anio": 2026,
+                "Tipo_Declaracion": "Normal",
+                "Num_Operacion": "100200300",
+                "Fecha_Presentacion": "2026-02-17",
+                "Saldo_Original": 15000
+            },
+            {
+                "RFC": "XAXX010101000",
+                "Periodo_Mes": "Febrero",
+                "Periodo_Anio": 2026,
+                "Tipo_Declaracion": "Normal",
+                "Num_Operacion": "100200301",
+                "Fecha_Presentacion": "2026-03-17",
+                "Saldo_Original": 22500
+            }
+        ]
+        df_plantilla = pd.DataFrame(datos_ejemplo)
+        df_plantilla.to_excel(ruta, index=False, engine='openpyxl')
     return ruta
+
+PLANTILLA_EXCEL_PATH = obtener_o_crear_plantilla_excel()
 
 def procesar_carga_masiva_excel(email, plan, archivo_excel):
     if archivo_excel is None:
@@ -156,7 +159,6 @@ def procesar_carga_masiva_excel(email, plan, archivo_excel):
 
     registros_creados = 0
     registros_omitidos = 0
-    errores = []
 
     for idx, row in df_excel.iterrows():
         try:
@@ -172,13 +174,10 @@ def procesar_carga_masiva_excel(email, plan, archivo_excel):
                 registros_omitidos += 1
                 continue
 
-            # Validar límite de RFCs del plan
             if rfc_limpio not in rfcs_actuales and len(rfcs_actuales) >= limite_rfc:
-                errores.append(f"Fila {idx+2}: Límite de RFCs alcanzado para {rfc_limpio}.")
                 registros_omitidos += 1
                 continue
 
-            # Verificar duplicados por número de operación
             check_dup = supabase.table("saldos_iva").select("id").eq("usuario_email", email).eq("num_operacion", num_op_limpio).execute()
             if check_dup.data:
                 registros_omitidos += 1
@@ -201,11 +200,10 @@ def procesar_carga_masiva_excel(email, plan, archivo_excel):
             if rfc_limpio not in rfcs_actuales:
                 rfcs_actuales.append(rfc_limpio)
 
-        except Exception as ex:
+        except Exception:
             registros_omitidos += 1
-            errores.append(f"Fila {idx+2}: {str(ex)}")
 
-    registrar_log(email, "CARGA_MASIVA_EXCEL", f"Registros ingresados: {registros_creados} | Omitidos/Duplicados: {registros_omitidos}")
+    registrar_log(email, "CARGA_MASIVA_EXCEL", f"Registros ingresados: {registros_creados} | Omitidos: {registros_omitidos}")
     
     rfcs_actualizados = obtener_rfcs_unicos(email)
     nuevo_val = rfcs_actualizados[0] if rfcs_actualizados else ""
@@ -221,7 +219,7 @@ def procesar_carga_masiva_excel(email, plan, archivo_excel):
 def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
     rfc = datos_saldo.get("RFC", "N/A")
     id_reg = datos_saldo.get("ID", "0")
-    filename = f"/tmp/Expediente_FED_{rfc}_{id_reg}.pdf"
+    filename = f"./Expediente_FED_{rfc}_{id_reg}.pdf"
 
     doc = SimpleDocTemplate(
         filename, pagesize=letter,
@@ -242,7 +240,6 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
     style_body = ParagraphStyle('BodyDark', parent=styles['Normal'], fontName='Helvetica', fontSize=8, textColor=dark_text, leading=11)
     style_badge = ParagraphStyle('BadgeText', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=8, textColor=colors.white, alignment=1)
 
-    # 1. ENCABEZADO CON LOGO OPCIONAL
     header_elements = []
     if logo_path and os.path.exists(logo_path):
         try:
@@ -265,7 +262,6 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
     story.append(Spacer(1, 6))
     story.append(HRFlowable(width="100%", thickness=2, color=primary_color, spaceAfter=8))
 
-    # 2. BANNER DE ESTADO
     banner_text = f"🔒 <b>ESTATUS: SALDO BLOQUEADO EN BÓVEDA POR TRÁMITE FED EN PROCESO</b>" if "TRÁMITE" in str(datos_saldo.get('Estatus')).upper() else f"<b>ESTATUS DEL SALDO: {datos_saldo.get('Estatus')}</b>"
     banner_bg = accent_color if "TRÁMITE" in str(datos_saldo.get('Estatus')).upper() else primary_color
     t_banner = Table([[Paragraph(banner_text, style_badge)]], colWidths=[540])
@@ -278,7 +274,6 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
     story.append(t_banner)
     story.append(Spacer(1, 8))
 
-    # 3. DATOS GENERALES DEL SALDO Y TRÁMITE
     monto_orig = float(datos_saldo.get("Saldo_Original", 0))
     monto_disp = float(datos_saldo.get("Saldo_Disponible", 0))
 
@@ -298,18 +293,15 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
     story.append(t_datos_gen)
     story.append(Spacer(1, 8))
 
-    # 4. FUNDAMENTACIÓN LEGAL
     story.append(Paragraph("1. FUNDAMENTACIÓN E INTEGRACIÓN JURÍDICA", style_h2))
     texto_ley = (
         "El presente expediente respalda la solicitud de devolución del saldo a favor de Impuesto al Valor Agregado conforme a los "
         "<b>Artículos 22 e integración del 22-D del Código Fiscal de la Federación (CFF)</b>, así como el <b>Artículo 6 de la Ley del Impuesto al Valor Agregado (LIVA)</b>. "
-        "El saldo deriva de operaciones reales efectivamente pagadas, contando con acuse de presentación oficial ante el SAT. "
-        "El desglose detallado de actos o actividades gravadas obra en la contabilidad y papeles de trabajo internos del contribuyente."
+        "El saldo deriva de operaciones reales efectivamente pagadas, contando con acuse de presentación oficial ante el SAT."
     )
     story.append(Paragraph(texto_ley, style_body))
     story.append(Spacer(1, 8))
 
-    # 5. TRAZABILIDAD FIFO
     story.append(Paragraph("2. CADENA DE TRAZABILIDAD E HISTORIAL DE SALDOS (MÉTODO FIFO)", style_h2))
     fifo_data = [
         [Paragraph("<b>Concepto</b>", style_body), Paragraph("<b>Folio / Referencia</b>", style_body), Paragraph("<b>Saldo Orig.</b>", style_body), Paragraph("<b>Aplicado</b>", style_body), Paragraph("<b>Remanente FED</b>", style_body)],
@@ -326,7 +318,6 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
     story.append(t_fifo)
     story.append(Spacer(1, 10))
 
-    # 6. FIRMAS Y REGISTRO AUDITORÍA
     log_text = Paragraph(
         f"<font size=7 color='#64748b'><b>REGISTRO DE AUDITORÍA:</b> Generado por Bóveda IVA Pro | "
         f"Fecha de Emisión: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | ID Certificado: BIVAPRO-FED-{id_reg}</font>", style_body
@@ -476,7 +467,6 @@ def actualizar_vista_resumen(email, rfc):
     
     return metric_html, df_cliente, gr.update(choices=ids_lista, value=ids_lista[0] if ids_lista else None), ruta_excel, gr.update(choices=ids_fed, value=ids_fed[0] if ids_fed else None)
 
-# --- ACCIONES FED (SOLICITAR, CONGELAR, PAGAR Y DESCONGELAR) ---
 def procesar_solicitud_fed(email, id_saldo, folio_fed, fecha_ingreso, obs, logo_file):
     if not id_saldo:
         return "❌ Selecciona un saldo válido.", None
@@ -668,7 +658,7 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
                 tabla_saldos_resumen = gr.DataFrame(label="Saldos Registrados en la Bóveda")
                 
                 with gr.Row():
-                    btn_descargar_resumen_excel = gr.DownloadButton("📥 Descargar Resumen en Excel", variant="secondary")
+                    file_descargar_resumen = gr.File(label="📥 Descargar Resumen en Excel", interactive=False)
 
                 gr.Markdown("---")
                 gr.Markdown("### 🏛️ Módulo FED (Formato Electrónico de Devoluciones) — Devolución de IVA")
@@ -683,7 +673,7 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
 
                 with gr.Row():
                     btn_congelar_fed = gr.Button("🔒 Congelar Saldo y Generar Expediente FED (PDF)", variant="primary")
-                    btn_descargar_pdf_fed = gr.DownloadButton("📄 Descargar Expediente FED (PDF)", variant="secondary")
+                    file_pdf_fed_descarga = gr.File(label="📄 Descargar / Visualizar Expediente FED (PDF)", interactive=False)
                 
                 lbl_fed_res = gr.Markdown()
 
@@ -719,7 +709,7 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
                 gr.Markdown("Si manejas múltiples clientes o quieres importar tu papel de trabajo histórico, descarga la plantilla de Excel, copia tus datos e impórtala de golpe.")
                 
                 with gr.Row():
-                    btn_descargar_plantilla = gr.DownloadButton("📥 Descargar Plantilla Guía en Excel", value=generar_plantilla_excel_masiva, variant="secondary")
+                    file_plantilla_descarga = gr.File(label="📥 Descargar Plantilla Guía en Excel", value=PLANTILLA_EXCEL_PATH, interactive=False)
                     file_excel_masivo = gr.File(label="📤 Cargar Plantilla Excel de Declaraciones", file_types=[".xlsx", ".xls"])
                 
                 btn_procesar_masivo = gr.Button("🚀 Importar Declaraciones Masivas a la Bóveda", variant="primary")
@@ -743,7 +733,7 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
                     btn_ver_hist = gr.Button("🔍 Consultar Historial")
                 
                 tabla_historial = gr.DataFrame(label="Historial de Acreditamientos")
-                btn_descargar_historial_excel = gr.DownloadButton("📥 Descargar Historial en Excel", variant="secondary")
+                file_descargar_historial = gr.File(label="📥 Descargar Historial en Excel", interactive=False)
 
     # --- VÍNCULOS DE EVENTOS ---
     btn_ingresar.click(
@@ -753,20 +743,20 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
 
     drop_rfc_resumen.change(
         fn=actualizar_vista_resumen, inputs=[state_email, drop_rfc_resumen],
-        outputs=[html_metricas, tabla_saldos_resumen, gr.Dropdown(), btn_descargar_resumen_excel, drop_id_fed]
+        outputs=[html_metricas, tabla_saldos_resumen, gr.Dropdown(), file_descargar_resumen, drop_id_fed]
     )
 
     btn_actualizar_resumen.click(
         fn=actualizar_vista_resumen, inputs=[state_email, drop_rfc_resumen],
-        outputs=[html_metricas, tabla_saldos_resumen, gr.Dropdown(), btn_descargar_resumen_excel, drop_id_fed]
+        outputs=[html_metricas, tabla_saldos_resumen, gr.Dropdown(), file_descargar_resumen, drop_id_fed]
     )
 
     btn_congelar_fed.click(
         fn=procesar_solicitud_fed, inputs=[state_email, drop_id_fed, txt_folio_fed, date_ingreso_fed, txt_obs_fed, file_logo_fed],
-        outputs=[lbl_fed_res, btn_descargar_pdf_fed]
+        outputs=[lbl_fed_res, file_pdf_fed_descarga]
     ).then(
         fn=actualizar_vista_resumen, inputs=[state_email, drop_rfc_resumen],
-        outputs=[html_metricas, tabla_saldos_resumen, gr.Dropdown(), btn_descargar_resumen_excel, drop_id_fed]
+        outputs=[html_metricas, tabla_saldos_resumen, gr.Dropdown(), file_descargar_resumen, drop_id_fed]
     )
 
     btn_resolver_fed.click(
@@ -774,7 +764,7 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
         outputs=[lbl_resolucion_res]
     ).then(
         fn=actualizar_vista_resumen, inputs=[state_email, drop_rfc_resumen],
-        outputs=[html_metricas, tabla_saldos_resumen, gr.Dropdown(), btn_descargar_resumen_excel, drop_id_fed]
+        outputs=[html_metricas, tabla_saldos_resumen, gr.Dropdown(), file_descargar_resumen, drop_id_fed]
     )
 
     file_pdf.change(
@@ -799,7 +789,7 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
 
     btn_ver_hist.click(
         fn=obtener_historial_vista, inputs=[state_email, drop_rfc_hist],
-        outputs=[tabla_historial, gr.Dropdown(), btn_descargar_historial_excel]
+        outputs=[tabla_historial, gr.Dropdown(), file_descargar_historial]
     )
 
 if __name__ == "__main__":
