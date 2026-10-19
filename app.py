@@ -593,6 +593,6 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
         outputs=[tabla_historial, drop_id_hist]
     )
 
-if _name_ == "_main_":
-    port = int(os.environ.get("PORT", 10000))
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 7860))
     demo.launch(server_name="0.0.0.0", server_port=port)
