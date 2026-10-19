@@ -109,7 +109,115 @@ def exportar_dataframe_excel(df, nombre_archivo):
     except Exception:
         return None
 
-# --- GENERADOR DE EXPEDIENTE FED PDF CON REDACCIÓN CORREGIDA Y PULIDA ---
+# --- FUNCIONES DE PLANTILLA Y CARGA MASIVA DE EXCEL ---
+def generar_plantilla_excel_masiva():
+    datos_ejemplo = [
+        {
+            "RFC": "XAXX010101000",
+            "Periodo_Mes": "Enero",
+            "Periodo_Anio": 2026,
+            "Tipo_Declaracion": "Normal",
+            "Num_Operacion": "100200300",
+            "Fecha_Presentacion": "2026-02-17",
+            "Saldo_Original": 15000
+        },
+        {
+            "RFC": "XAXX010101000",
+            "Periodo_Mes": "Febrero",
+            "Periodo_Anio": 2026,
+            "Tipo_Declaracion": "Normal",
+            "Num_Operacion": "100200301",
+            "Fecha_Presentacion": "2026-03-17",
+            "Saldo_Original": 22500
+        }
+    ]
+    df_plantilla = pd.DataFrame(datos_ejemplo)
+    ruta = "/tmp/Plantilla_Carga_Masiva_BovedaIVA.xlsx"
+    df_plantilla.to_excel(ruta, index=False, engine='openpyxl')
+    return ruta
+
+def procesar_carga_masiva_excel(email, plan, archivo_excel):
+    if archivo_excel is None:
+        return "❌ Por favor sube un archivo Excel válido.", gr.update(), gr.update(), gr.update()
+    
+    ruta_file = archivo_excel.name if hasattr(archivo_excel, 'name') else archivo_excel
+    try:
+        df_excel = pd.read_excel(ruta_file, engine='openpyxl')
+    except Exception as e:
+        return f"❌ Error al leer el archivo Excel: {str(e)}", gr.update(), gr.update(), gr.update()
+
+    columnas_requeridas = ["RFC", "Periodo_Mes", "Periodo_Anio", "Tipo_Declaracion", "Num_Operacion", "Fecha_Presentacion", "Saldo_Original"]
+    for col in columnas_requeridas:
+        if col not in df_excel.columns:
+            return f"❌ Formato incorrecto. Falta la columna obligatoria: '{col}'. Descarga la plantilla guía.", gr.update(), gr.update(), gr.update()
+
+    rfcs_actuales = obtener_rfcs_unicos(email)
+    limite_rfc = 5 if ("basico" in str(plan).lower() or "básico" in str(plan).lower()) else 999999
+
+    registros_creados = 0
+    registros_omitidos = 0
+    errores = []
+
+    for idx, row in df_excel.iterrows():
+        try:
+            rfc_limpio = str(row["RFC"]).upper().strip()
+            num_op_limpio = str(row["Num_Operacion"]).replace(".0", "").strip()
+            mes = str(row["Periodo_Mes"]).capitalize().strip()
+            anio = int(row["Periodo_Anio"])
+            tipo_dec = str(row["Tipo_Declaracion"]).strip()
+            fecha_pres = str(row["Fecha_Presentacion"]).split()[0]
+            saldo_orig = float(row["Saldo_Original"])
+
+            if not rfc_limpio or rfc_limpio == "NAN" or not num_op_limpio or num_op_limpio == "NAN":
+                registros_omitidos += 1
+                continue
+
+            # Validar límite de RFCs del plan
+            if rfc_limpio not in rfcs_actuales and len(rfcs_actuales) >= limite_rfc:
+                errores.append(f"Fila {idx+2}: Límite de RFCs alcanzado para {rfc_limpio}.")
+                registros_omitidos += 1
+                continue
+
+            # Verificar duplicados por número de operación
+            check_dup = supabase.table("saldos_iva").select("id").eq("usuario_email", email).eq("num_operacion", num_op_limpio).execute()
+            if check_dup.data:
+                registros_omitidos += 1
+                continue
+
+            supabase.table("saldos_iva").insert({
+                "usuario_email": email,
+                "rfc": rfc_limpio,
+                "periodo_mes": mes,
+                "periodo_anio": anio,
+                "tipo_declaracion": tipo_dec,
+                "num_operacion": num_op_limpio,
+                "fecha_presentacion": fecha_pres,
+                "saldo_original": saldo_orig,
+                "saldo_disponible": saldo_orig,
+                "estatus": "Vigente"
+            }).execute()
+
+            registros_creados += 1
+            if rfc_limpio not in rfcs_actuales:
+                rfcs_actuales.append(rfc_limpio)
+
+        except Exception as ex:
+            registros_omitidos += 1
+            errores.append(f"Fila {idx+2}: {str(ex)}")
+
+    registrar_log(email, "CARGA_MASIVA_EXCEL", f"Registros ingresados: {registros_creados} | Omitidos/Duplicados: {registros_omitidos}")
+    
+    rfcs_actualizados = obtener_rfcs_unicos(email)
+    nuevo_val = rfcs_actualizados[0] if rfcs_actualizados else ""
+    upd = gr.update(choices=rfcs_actualizados, value=nuevo_val)
+
+    msg = f"✅ **Carga Masiva Finalizada:** {registros_creados} declaraciones registradas exitosamente."
+    if registros_omitidos > 0:
+        msg += f" (Se omitieron {registros_omitidos} filas por estar duplicadas o incompletas)."
+
+    return msg, upd, upd, upd
+
+# --- GENERADOR DE EXPEDIENTE FED PDF ---
 def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
     rfc = datos_saldo.get("RFC", "N/A")
     id_reg = datos_saldo.get("ID", "0")
@@ -190,7 +298,7 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
     story.append(t_datos_gen)
     story.append(Spacer(1, 8))
 
-    # 4. FUNDAMENTACIÓN LEGAL (GRAMÁTICA CORREGIDA)
+    # 4. FUNDAMENTACIÓN LEGAL
     story.append(Paragraph("1. FUNDAMENTACIÓN E INTEGRACIÓN JURÍDICA", style_h2))
     texto_ley = (
         "El presente expediente respalda la solicitud de devolución del saldo a favor de Impuesto al Valor Agregado conforme a los "
@@ -588,7 +696,8 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
                 
                 lbl_resolucion_res = gr.Markdown()
 
-            with gr.TabItem("📥 Carga de Declaraciones (PDF)"):
+            with gr.TabItem("📥 Carga de Declaraciones (PDF / Excel)"):
+                gr.Markdown("### 1. Carga Individual por PDF del SAT")
                 file_pdf = gr.File(label="Subir Declaración PDF del SAT", file_types=[".pdf"])
                 with gr.Row():
                     txt_rfc_pdf = gr.Textbox(label="RFC Contribuyente")
@@ -602,8 +711,19 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
                     num_saldo_pdf = gr.Number(label="Saldo a Favor ($)", value=0)
                     chk_mod_pdf = gr.Checkbox(label="Sustituir declaración anterior")
                 
-                btn_guardar_pdf = gr.Button("💾 Registrar en Bóveda", variant="primary")
+                btn_guardar_pdf = gr.Button("💾 Registrar Declaración Individual", variant="primary")
                 lbl_guardar_pdf_res = gr.Markdown()
+
+                gr.Markdown("---")
+                gr.Markdown("### 2. Carga Masiva para Despachos (vía Excel)")
+                gr.Markdown("Si manejas múltiples clientes o quieres importar tu papel de trabajo histórico, descarga la plantilla de Excel, copia tus datos e impórtala de golpe.")
+                
+                with gr.Row():
+                    btn_descargar_plantilla = gr.DownloadButton("📥 Descargar Plantilla Guía en Excel", value=generar_plantilla_excel_masiva, variant="secondary")
+                    file_excel_masivo = gr.File(label="📤 Cargar Plantilla Excel de Declaraciones", file_types=[".xlsx", ".xls"])
+                
+                btn_procesar_masivo = gr.Button("🚀 Importar Declaraciones Masivas a la Bóveda", variant="primary")
+                lbl_masivo_res = gr.Markdown()
 
             with gr.TabItem("⚙️ Motor FIFO / Acreditamiento"):
                 with gr.Row():
@@ -665,6 +785,11 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
     btn_guardar_pdf.click(
         fn=guardar_declaracion_pdf, inputs=[state_email, state_plan, txt_rfc_pdf, drop_mes_pdf, num_anio_pdf, drop_tipo_pdf, txt_num_op_pdf, date_pres_pdf, num_saldo_pdf, chk_mod_pdf],
         outputs=[lbl_guardar_pdf_res, drop_rfc_resumen, drop_rfc_fifo, drop_rfc_hist]
+    )
+
+    btn_procesar_masivo.click(
+        fn=procesar_carga_masiva_excel, inputs=[state_email, state_plan, file_excel_masivo],
+        outputs=[lbl_masivo_res, drop_rfc_resumen, drop_rfc_fifo, drop_rfc_hist]
     )
 
     btn_ejecutar_fifo.click(
