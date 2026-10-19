@@ -109,7 +109,6 @@ def exportar_dataframe_excel(df, nombre_archivo):
     except Exception:
         return None
 
-# --- GENERAR PLANTILLA GUÍA ESTÁTICA EN DISCO ---
 def obtener_o_crear_plantilla_excel():
     ruta = "./Plantilla_Carga_Masiva_BovedaIVA.xlsx"
     if not os.path.exists(ruta):
@@ -404,19 +403,19 @@ def extraer_datos_pdf(file_obj):
 def login_usuario(email, password):
     email = email.strip().lower()
     if not email or not password:
-        return "❌ Ingresa usuario y contraseña.", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
+        return "❌ Ingresa usuario y contraseña.", gr.update(visible=True), gr.update(visible=False), "", "", "", ""
     if not supabase:
-        return "❌ Error de conexión con Supabase.", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
+        return "❌ Error de conexión con Supabase.", gr.update(visible=True), gr.update(visible=False), "", "", "", ""
     try:
         res = supabase.table("usuarios_saas").select("*").eq("email", email).execute()
         usuarios = res.data
         if not usuarios:
-            return "❌ Usuario no registrado.", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
+            return "❌ Usuario no registrado.", gr.update(visible=True), gr.update(visible=False), "", "", "", ""
         
         user_data = usuarios[0]
         if user_data.get("password") == password:
             if user_data.get("activo") == False:
-                return "❌ Suscripción suspendida.", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
+                return "❌ Suscripción suspendida.", gr.update(visible=True), gr.update(visible=False), "", "", "", ""
             
             tipo_plan = user_data.get("plan", "Plan Básico")
             fecha_exp_str = str(user_data.get("fecha_expiracion", "Indefinida"))
@@ -429,19 +428,21 @@ def login_usuario(email, password):
                 </p>
             </div>
             """
-            
-            rfcs = obtener_rfcs_unicos(email)
-            val_inicial = rfcs[0] if rfcs else ""
-            upd_rfc = gr.update(choices=rfcs, value=val_inicial)
 
             return (
                 "¡Acceso concedido!", gr.update(visible=False), gr.update(visible=True),
-                header_html, email, tipo_plan, upd_rfc, upd_rfc, upd_rfc
+                header_html, email, tipo_plan
             )
         else:
-            return "❌ Contraseña incorrecta.", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
+            return "❌ Contraseña incorrecta.", gr.update(visible=True), gr.update(visible=False), "", "", "", ""
     except Exception as e:
-        return f"Error al validar acceso: {e}", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
+        return f"Error al validar acceso: {e}", gr.update(visible=True), gr.update(visible=False), "", "", "", ""
+
+def inicializar_panel_usuario(email):
+    rfcs = obtener_rfcs_unicos(email)
+    val_inicial = rfcs[0] if rfcs else ""
+    upd = gr.update(choices=rfcs, value=val_inicial)
+    return upd, upd, upd
 
 def actualizar_vista_resumen(email, rfc):
     if not rfc:
@@ -627,7 +628,7 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
     state_email = gr.State("")
     state_plan = gr.State("")
 
-    # Panel de Login
+    # Panel de Login (Completamente limpio)
     with gr.Column(visible=True) as panel_login:
         gr.Markdown("""
             <div style="max-width: 480px; margin: 30px auto; padding: 20px; background: white; border-radius: 12px; text-align: center;">
@@ -738,7 +739,10 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
     # --- VÍNCULOS DE EVENTOS ---
     btn_ingresar.click(
         fn=login_usuario, inputs=[txt_user, txt_pass],
-        outputs=[lbl_msg, panel_login, panel_app, html_header, state_email, state_plan, drop_rfc_resumen, drop_rfc_fifo, drop_rfc_hist]
+        outputs=[lbl_msg, panel_login, panel_app, html_header, state_email, state_plan]
+    ).then(
+        fn=inicializar_panel_usuario, inputs=[state_email],
+        outputs=[drop_rfc_resumen, drop_rfc_fifo, drop_rfc_hist]
     )
 
     drop_rfc_resumen.change(
