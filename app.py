@@ -457,18 +457,29 @@ def procesar_solicitud_fed(email, id_saldo, folio_fed, fecha_ingreso, obs, logo_
         if not res.data:
             return "❌ No se encontró el saldo.", None
         
-        datos_saldo = res.data[0]
+        row = res.data[0]
+        datos_saldo = {
+            "ID": row.get("id"),
+            "RFC": row.get("rfc"),
+            "Periodo_Mes": row.get("periodo_mes"),
+            "Periodo_Anio": row.get("periodo_anio"),
+            "Tipo_Declaracion": row.get("tipo_declaracion"),
+            "Num_Operacion": row.get("num_operacion"),
+            "Fecha_Presentacion": row.get("fecha_presentacion"),
+            "Saldo_Original": row.get("saldo_original", 0),
+            "Saldo_Disponible": row.get("saldo_disponible", 0),
+            "Estatus": "En Trámite FED",
+            "Folio_FED": folio_fed if folio_fed else f"FED-{id_saldo}",
+            "Fecha_Ingreso_FED": fecha_ingreso,
+            "Observaciones_FED": obs
+        }
         
         supabase.table("saldos_iva").update({
             "estatus": "En Trámite FED",
-            "folio_fed": str(folio_fed) if folio_fed else f"FED-{id_saldo}",
+            "folio_fed": datos_saldo["Folio_FED"],
             "fecha_ingreso_fed": str(fecha_ingreso),
             "observaciones_fed": str(obs)
         }).eq("id", int(id_saldo)).execute()
-
-        datos_saldo["Estatus"] = "En Trámite FED"
-        datos_saldo["Folio_FED"] = folio_fed
-        datos_saldo["Fecha_Ingreso_FED"] = fecha_ingreso
 
         logo_path = logo_file.name if hasattr(logo_file, 'name') else logo_file
         pdf_path = generar_pdf_expediente_fed_real(datos_saldo, logo_path)
