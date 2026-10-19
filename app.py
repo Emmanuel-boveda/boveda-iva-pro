@@ -404,10 +404,10 @@ def login_usuario(email, password):
             tipo_plan = user_data.get("plan", "Plan Básico")
             fecha_exp_str = str(user_data.get("fecha_expiracion", "Indefinida"))
             
-            header_html = (
-                '<div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); '
-                'padding: 18px; border-radius: 10px; color: white; margin-bottom: 15px;">'
-                '<h2 style="margin:0; font-size: 1.8rem;">🏛️ Bóveda IVA Pro</h2>'
+           header_html = (
+                f'<div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); '
+                f'padding: 18px; border-radius: 10px; color: white; margin-bottom: 15px;">'
+                f'<h2 style="margin:0; font-size: 1.8rem;">🏛️ Bóveda IVA Pro</h2>'
                 f'<p style="margin:5px 0 0 0; color: #e0e7ff;">Bienvenido, <b>{email}</b> | '
                 f'Plan: <b>{tipo_plan}</b> | Vence: <b>{fecha_exp_str}</b></p></div>'
             )
