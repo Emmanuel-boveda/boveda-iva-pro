@@ -6,6 +6,13 @@ import pypdf
 from supabase import create_client, Client
 import gradio as gr
 
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable, KeepTogether, Image as RLImage
+)
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
 # --- CONFIGURACIÓN DE SUPABASE ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
@@ -54,7 +61,8 @@ def cargar_saldos(email):
             "id": "ID", "rfc": "RFC", "periodo_mes": "Periodo_Mes", "periodo_anio": "Periodo_Anio",
             "tipo_declaracion": "Tipo_Declaracion", "num_operacion": "Num_Operacion",
             "fecha_presentacion": "Fecha_Presentacion", "saldo_original": "Saldo_Original",
-            "saldo_disponible": "Saldo_Disponible", "estatus": "Estatus"
+            "saldo_disponible": "Saldo_Disponible", "estatus": "Estatus",
+            "folio_fed": "Folio_FED", "fecha_ingreso_fed": "Fecha_Ingreso_FED", "observaciones_fed": "Observaciones_FED"
         })
     except Exception:
         return pd.DataFrame()
@@ -101,6 +109,136 @@ def exportar_dataframe_excel(df, nombre_archivo):
     except Exception:
         return None
 
+# --- GENERADOR DE EXPEDIENTE FED PDF CON REDACCIÓN CORREGIDA Y PULIDA ---
+def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
+    rfc = datos_saldo.get("RFC", "N/A")
+    id_reg = datos_saldo.get("ID", "0")
+    filename = f"/tmp/Expediente_FED_{rfc}_{id_reg}.pdf"
+
+    doc = SimpleDocTemplate(
+        filename, pagesize=letter,
+        rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36
+    )
+    styles = getSampleStyleSheet()
+    story = []
+
+    primary_color = colors.HexColor("#1e3c72")
+    secondary_color = colors.HexColor("#2a5298")
+    accent_color = colors.HexColor("#dc2626")
+    light_bg = colors.HexColor("#f8fafc")
+    dark_text = colors.HexColor("#0f172a")
+
+    style_title = ParagraphStyle('DocTitle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=16, textColor=primary_color, leading=20)
+    style_subtitle = ParagraphStyle('DocSubTitle', parent=styles['Normal'], fontName='Helvetica', fontSize=9, textColor=colors.HexColor("#475569"), leading=12)
+    style_h2 = ParagraphStyle('SectionHeader', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=11, textColor=primary_color, spaceBefore=10, spaceAfter=5, leading=14)
+    style_body = ParagraphStyle('BodyDark', parent=styles['Normal'], fontName='Helvetica', fontSize=8, textColor=dark_text, leading=11)
+    style_badge = ParagraphStyle('BadgeText', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=8, textColor=colors.white, alignment=1)
+
+    # 1. ENCABEZADO CON LOGO OPCIONAL
+    header_elements = []
+    if logo_path and os.path.exists(logo_path):
+        try:
+            img_logo = RLImage(logo_path, width=1.5*72, height=0.6*72)
+            header_elements.append(img_logo)
+        except Exception:
+            header_elements.append(Paragraph("<b>BÓVEDA IVA PRO</b>", style_title))
+    else:
+        header_elements.append(Paragraph("<b>BÓVEDA IVA PRO</b><br/><font size=7 color='#64748b'>SISTEMA DE AUDITORÍA E INTEGRIDAD</font>", style_title))
+
+    header_table_data = [
+        [
+            header_elements[0],
+            Paragraph(f"<font size=8><b>DICTAMEN TÉCNICO FED</b><br/>SOLICITUD DE DEVOLUCIÓN DE IVA<br/><b>ESTATUS: {datos_saldo.get('Estatus', 'EN TRÁMITE FED')}</b></font>", ParagraphStyle('RHeader', parent=style_subtitle, alignment=2))
+        ]
+    ]
+    t_header = Table(header_table_data, colWidths=[300, 240])
+    t_header.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
+    story.append(t_header)
+    story.append(Spacer(1, 6))
+    story.append(HRFlowable(width="100%", thickness=2, color=primary_color, spaceAfter=8))
+
+    # 2. BANNER DE ESTADO
+    banner_text = f"🔒 <b>ESTATUS: SALDO BLOQUEADO EN BÓVEDA POR TRÁMITE FED EN PROCESO</b>" if "TRÁMITE" in str(datos_saldo.get('Estatus')).upper() else f"<b>ESTATUS DEL SALDO: {datos_saldo.get('Estatus')}</b>"
+    banner_bg = accent_color if "TRÁMITE" in str(datos_saldo.get('Estatus')).upper() else primary_color
+    t_banner = Table([[Paragraph(banner_text, style_badge)]], colWidths=[540])
+    t_banner.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), banner_bg),
+        ('TOPPADDING', (0,0), (-1,-1), 4),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+    ]))
+    story.append(t_banner)
+    story.append(Spacer(1, 8))
+
+    # 3. DATOS GENERALES DEL SALDO Y TRÁMITE
+    monto_orig = float(datos_saldo.get("Saldo_Original", 0))
+    monto_disp = float(datos_saldo.get("Saldo_Disponible", 0))
+
+    datos_gen = [
+        [Paragraph("<b>RFC Contribuyente:</b>", style_body), Paragraph(str(rfc), style_body), Paragraph("<b>Folio Interno Bóveda:</b>", style_body), Paragraph(f"FED-{id_reg}", style_body)],
+        [Paragraph("<b>Periodo / Ejercicio Origen:</b>", style_body), Paragraph(f"{datos_saldo.get('Periodo_Mes')} {datos_saldo.get('Periodo_Anio')}", style_body), Paragraph("<b>Fecha de Ingreso SAT:</b>", style_body), Paragraph(str(datos_saldo.get('Fecha_Ingreso_FED', datetime.now().strftime('%Y-%m-%d'))), style_body)],
+        [Paragraph("<b>Tipo de Declaración:</b>", style_body), Paragraph(str(datos_saldo.get('Tipo_Declaracion', 'Normal')), style_body), Paragraph("<b>Número de Operación SAT:</b>", style_body), Paragraph(str(datos_saldo.get('Num_Operacion', 'N/A')), style_body)],
+        [Paragraph("<b>Fecha de Presentación:</b>", style_body), Paragraph(str(datos_saldo.get('Fecha_Presentacion', 'N/A')), style_body), Paragraph("<b>Folio Trámite FED SAT:</b>", style_body), Paragraph(str(datos_saldo.get('Folio_FED', 'En Proceso')), style_body)],
+        [Paragraph("<b>Monto Original Declarante:</b>", style_body), Paragraph(f"${monto_orig:,.2f} MXN", style_body), Paragraph("<b>Monto Solicitado FED:</b>", style_body), Paragraph(f"<font color='#16a34a'><b>${monto_disp:,.2f} MXN</b></font>", style_body)]
+    ]
+    t_datos_gen = Table(datos_gen, colWidths=[120, 150, 120, 150])
+    t_datos_gen.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), light_bg),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#cbd5e1")),
+        ('TOPPADDING', (0,0), (-1,-1), 4), ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+    ]))
+    story.append(t_datos_gen)
+    story.append(Spacer(1, 8))
+
+    # 4. FUNDAMENTACIÓN LEGAL (GRAMÁTICA CORREGIDA)
+    story.append(Paragraph("1. FUNDAMENTACIÓN E INTEGRACIÓN JURÍDICA", style_h2))
+    texto_ley = (
+        "El presente expediente respalda la solicitud de devolución del saldo a favor de Impuesto al Valor Agregado conforme a los "
+        "<b>Artículos 22 e integración del 22-D del Código Fiscal de la Federación (CFF)</b>, así como el <b>Artículo 6 de la Ley del Impuesto al Valor Agregado (LIVA)</b>. "
+        "El saldo deriva de operaciones reales efectivamente pagadas, contando con acuse de presentación oficial ante el SAT. "
+        "El desglose detallado de actos o actividades gravadas obra en la contabilidad y papeles de trabajo internos del contribuyente."
+    )
+    story.append(Paragraph(texto_ley, style_body))
+    story.append(Spacer(1, 8))
+
+    # 5. TRAZABILIDAD FIFO
+    story.append(Paragraph("2. CADENA DE TRAZABILIDAD E HISTORIAL DE SALDOS (MÉTODO FIFO)", style_h2))
+    fifo_data = [
+        [Paragraph("<b>Concepto</b>", style_body), Paragraph("<b>Folio / Referencia</b>", style_body), Paragraph("<b>Saldo Orig.</b>", style_body), Paragraph("<b>Aplicado</b>", style_body), Paragraph("<b>Remanente FED</b>", style_body)],
+        [Paragraph(f"Declaración {datos_saldo.get('Periodo_Mes')} {datos_saldo.get('Periodo_Anio')}", style_body), Paragraph(str(datos_saldo.get('Num_Operacion')), style_body), Paragraph(f"${monto_orig:,.2f}", style_body), Paragraph(f"${monto_orig - monto_disp:,.2f}", style_body), Paragraph(f"${monto_disp:,.2f}", style_body)],
+        [Paragraph(f"<b>🔒 SOLICITUD FED / BLOQUEO</b>", style_body), Paragraph(str(datos_saldo.get('Folio_FED', 'TRÁMITE FED')), style_body), Paragraph(f"<b>${monto_orig:,.2f}</b>", style_body), Paragraph("<b>$0.00</b>", style_body), Paragraph(f"<b>${monto_disp:,.2f}</b>", style_body)]
+    ]
+    t_fifo = Table(fifo_data, colWidths=[160, 100, 95, 90, 95])
+    t_fifo.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), secondary_color),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#cbd5e1")),
+        ('TOPPADDING', (0,0), (-1,-1), 4), ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+    ]))
+    for i in range(5): fifo_data[0][i].style.textColor = colors.white
+    story.append(t_fifo)
+    story.append(Spacer(1, 10))
+
+    # 6. FIRMAS Y REGISTRO AUDITORÍA
+    log_text = Paragraph(
+        f"<font size=7 color='#64748b'><b>REGISTRO DE AUDITORÍA:</b> Generado por Bóveda IVA Pro | "
+        f"Fecha de Emisión: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | ID Certificado: BIVAPRO-FED-{id_reg}</font>", style_body
+    )
+    story.append(log_text)
+    story.append(Spacer(1, 20))
+
+    firmas_data = [
+        [
+            Paragraph("__________________________________________<br/><b>Contador Público Responsable</b><br/>Firma y Cédula Profesional", ParagraphStyle('F1', parent=style_body, alignment=1)),
+            Paragraph("__________________________________________<br/><b>Representante Legal / Contribuyente</b><br/>Firma de Conformidad", ParagraphStyle('F2', parent=style_body, alignment=1))
+        ]
+    ]
+    t_firmas = Table(firmas_data, colWidths=[270, 270])
+    t_firmas.setStyle(TableStyle([('ALIGN', (0,0), (-1,-1), 'CENTER'), ('VALIGN', (0,0), (-1,-1), 'TOP')]))
+    story.append(t_firmas)
+
+    doc.build(story)
+    return filename
+
 def extraer_datos_pdf(file_obj):
     texto = ""
     try:
@@ -117,8 +255,7 @@ def extraer_datos_pdf(file_obj):
     }
     
     match_rfc = re.search(r"RFC[:\s]*([A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{3})", texto, re.IGNORECASE)
-    if match_rfc:
-        datos["rfc"] = match_rfc.group(1).upper()
+    if match_rfc: datos["rfc"] = match_rfc.group(1).upper()
 
     match_op = re.search(r"Número\s+de\s+operación[:\s]*([0-9]+(?:\.[0-9]+)?)", texto, re.IGNORECASE)
     if match_op:
@@ -130,26 +267,21 @@ def extraer_datos_pdf(file_obj):
         try:
             dt_p = datetime.strptime(match_fecha.group(1), "%d/%m/%Y")
             datos["fecha_pres"] = dt_p.strftime("%Y-%m-%d")
-        except Exception:
-            pass
+        except Exception: pass
 
     match_anio = re.search(r"Ejercicio[:\s]*(\d{4})", texto, re.IGNORECASE)
     if match_anio:
-        try:
-            datos["anio"] = int(match_anio.group(1))
-        except Exception:
-            pass
+        try: datos["anio"] = int(match_anio.group(1))
+        except Exception: pass
 
     meses_validos = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
     for m in meses_validos:
         if re.search(rf"(?:Período|Periodo)[^\n]*?{m}", texto, re.IGNORECASE):
-            datos["mes"] = m
-            break
+            datos["mes"] = m; break
     else:
         for m in meses_validos:
             if re.search(rf"\b{m}\b", texto, re.IGNORECASE):
-                datos["mes"] = m
-                break
+                datos["mes"] = m; break
 
     if re.search(r"dejar\s+sin\s+efecto", texto, re.IGNORECASE):
         datos["tipo_declaracion"] = "Complementaria - Dejar sin Efecto"
@@ -164,174 +296,144 @@ def extraer_datos_pdf(file_obj):
             bloque_iva = partes_iva[1][:200]
             match_afavor = re.search(r"A\s+favor[:\s]*([\d,]+)", bloque_iva, re.IGNORECASE)
             if match_afavor:
-                try:
-                    datos["saldo_favor"] = int(match_afavor.group(1).replace(",", ""))
-                except Exception:
-                    pass
+                try: datos["saldo_favor"] = int(match_afavor.group(1).replace(",", ""))
+                except Exception: pass
 
     return datos, texto
 
-# --- LÓGICA DE EVENTOS EN INTERFAZ ---
+# --- LÓGICA DE EVENTOS DE SESIÓN Y VISTAS ---
 def login_usuario(email, password):
     email = email.strip().lower()
     if not email or not password:
-        return "❌ Por favor ingresa usuario y contraseña.", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
+        return "❌ Ingresa usuario y contraseña.", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
     if not supabase:
         return "❌ Error de conexión con Supabase.", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
     try:
         res = supabase.table("usuarios_saas").select("*").eq("email", email).execute()
         usuarios = res.data
         if not usuarios:
-            return "❌ El usuario no existe o no tiene una cuenta registrada.", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
+            return "❌ Usuario no registrado.", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
         
         user_data = usuarios[0]
         if user_data.get("password") == password:
             if user_data.get("activo") == False:
-                return "❌ Tu suscripción está suspendida o inactiva.", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
+                return "❌ Suscripción suspendida.", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
             
-            fecha_exp = user_data.get("fecha_expiracion") or user_data.get("fecha_expuración")
-            if fecha_exp:
-                exp_date = datetime.strptime(str(fecha_exp), "%Y-%m-%d").date()
-                if datetime.now().date() > exp_date:
-                    return "❌ Tu suscripción ha expirado.", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
-            
-            codigo_ref = user_data.get("codigo_referido")
-            if not codigo_ref:
-                base_nombre = email.split("@")[0].upper()
-                digitos_fecha = datetime.now().strftime("%d%m")
-                codigo_ref = f"{base_nombre}{digitos_fecha}"
-
             tipo_plan = user_data.get("plan", "Plan Básico")
-            fecha_exp_str = str(fecha_exp) if fecha_exp else "Indefinida"
+            fecha_exp_str = str(user_data.get("fecha_expiracion", "Indefinida"))
             
-            registrar_log(email, "LOGIN", "Inicio de sesión exitoso en Gradio")
-
             header_html = f"""
             <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); padding: 18px; border-radius: 10px; color: white; margin-bottom: 15px;">
                 <h2 style="margin:0; font-size: 1.8rem;">🏛️ Bóveda IVA Pro</h2>
                 <p style="margin:5px 0 0 0; color: #e0e7ff;">
-                    Bienvenido, <b>{email}</b> | Plan: <b>{tipo_plan}</b> | ⏳ Vence: <b>{fecha_exp_str}</b> | 🎁 Tu Código: <b>{codigo_ref}</b>
+                    Bienvenido, <b>{email}</b> | Plan: <b>{tipo_plan}</b> | Vence: <b>{fecha_exp_str}</b>
                 </p>
             </div>
             """
             
             rfcs = obtener_rfcs_unicos(email)
             val_inicial = rfcs[0] if rfcs else ""
-            rfc_dropdown_update = gr.update(choices=rfcs, value=val_inicial)
+            upd_rfc = gr.update(choices=rfcs, value=val_inicial)
 
             return (
-                "¡Acceso concedido!",
-                gr.update(visible=False),
-                gr.update(visible=True),
-                header_html,
-                email,
-                tipo_plan,
-                rfc_dropdown_update,
-                rfc_dropdown_update,
-                rfc_dropdown_update
+                "¡Acceso concedido!", gr.update(visible=False), gr.update(visible=True),
+                header_html, email, tipo_plan, upd_rfc, upd_rfc, upd_rfc
             )
         else:
             return "❌ Contraseña incorrecta.", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
     except Exception as e:
-        return f"Error al validar el acceso: {e}", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
+        return f"Error al validar acceso: {e}", gr.update(visible=True), gr.update(visible=False), "", "", "", "", gr.update(), gr.update(), gr.update()
 
 def actualizar_vista_resumen(email, rfc):
     if not rfc:
-        return "### Selecciona o registra un cliente.", pd.DataFrame(), gr.update(choices=[]), None
+        return "### Selecciona o registra un cliente.", pd.DataFrame(), gr.update(choices=[]), None, gr.update(choices=[])
     df = cargar_saldos(email)
     if df.empty:
-        return "### No hay datos registrados.", pd.DataFrame(), gr.update(choices=[]), None
+        return "### No hay datos registrados.", pd.DataFrame(), gr.update(choices=[]), None, gr.update(choices=[])
     
     df_cliente = df[df["RFC"] == rfc].copy()
     if df_cliente.empty:
-        return f"### Sin registros para {rfc}", pd.DataFrame(), gr.update(choices=[]), None
+        return f"### Sin registros para {rfc}", pd.DataFrame(), gr.update(choices=[]), None, gr.update(choices=[])
     
     df_cliente["Mes_Num"] = df_cliente["Periodo_Mes"].apply(mes_a_numero)
     df_cliente = df_cliente.sort_values(by=["Periodo_Anio", "Mes_Num"]).drop(columns=["Mes_Num"])
     
-    hoy = datetime.now().date()
-    def evaluar_semaforo(fecha_str):
-        try:
-            f_pres = datetime.strptime(str(fecha_str), "%Y-%m-%d").date()
-            limite_prescripcion = f_pres + timedelta(days=5*365)
-            dias_restantes = (limite_prescripcion - hoy).days
-            if dias_restantes < 0:
-                return "🔴 Prescrito (>5 años)"
-            elif dias_restantes <= 365:
-                return "🔴 Riesgo Inminente (<1 año)"
-            elif dias_restantes <= 730:
-                return "🟡 Atención (1-2 años)"
-            else:
-                return "🟢 Vigente (>2 años)"
-        except Exception:
-            return "🟢 Vigente"
-
-    df_cliente["Estatus_Caducidad"] = df_cliente["Fecha_Presentacion"].apply(evaluar_semaforo)
     total_disp = int(df_cliente[df_cliente["Estatus"] == "Vigente"]["Saldo_Disponible"].sum()) if not df_cliente.empty else 0
     metric_html = f"<h3>SALDO TOTAL VIGENTE — {rfc}: <span style='color:#16a34a;'>${total_disp:,} MXN</span></h3>"
     
     ids_lista = df_cliente["ID"].tolist()
-    
-    # Generar archivo Excel para descarga
+    ids_fed = df_cliente[df_cliente["Estatus"].isin(["Vigente", "En Trámite FED"])]["ID"].tolist()
+
     ruta_excel = exportar_dataframe_excel(df_cliente, f"Resumen_Boveda_{rfc}")
     
-    return metric_html, df_cliente, gr.update(choices=ids_lista, value=ids_lista[0] if ids_lista else None), ruta_excel
+    return metric_html, df_cliente, gr.update(choices=ids_lista, value=ids_lista[0] if ids_lista else None), ruta_excel, gr.update(choices=ids_fed, value=ids_fed[0] if ids_fed else None)
 
-def eliminar_registro_saldos(email, id_registro, confirma):
-    if not confirma:
-        return "❌ Debes confirmar la casilla para eliminar."
-    if not id_registro:
-        return "❌ Selecciona un ID válido."
+# --- ACCIONES FED (SOLICITAR, CONGELAR, PAGAR Y DESCONGELAR) ---
+def procesar_solicitud_fed(email, id_saldo, folio_fed, fecha_ingreso, obs, logo_file):
+    if not id_saldo:
+        return "❌ Selecciona un saldo válido.", None
     try:
-        supabase.table("saldos_iva").delete().eq("id", int(id_registro)).execute()
-        registrar_log(email, "ELIMINAR_REGISTRO_BOVEDA", f"ID: {id_registro} eliminado")
-        return "¡Registro eliminado correctamente de la Bóveda!"
-    except Exception as e:
-        return f"Error al eliminar: {e}"
+        res = supabase.table("saldos_iva").select("*").eq("id", int(id_saldo)).execute()
+        if not res.data:
+            return "❌ No se encontró el saldo.", None
+        
+        datos_saldo = res.data[0]
+        
+        supabase.table("saldos_iva").update({
+            "estatus": "En Trámite FED",
+            "folio_fed": str(folio_fed) if folio_fed else f"FED-{id_saldo}",
+            "fecha_ingreso_fed": str(fecha_ingreso),
+            "observaciones_fed": str(obs)
+        }).eq("id", int(id_saldo)).execute()
 
-def eliminar_cliente_completo(email, rfc_a_eliminar, confirma):
-    if not confirma:
-        return "❌ Debes confirmar la casilla para eliminar al cliente.", gr.update(), gr.update(), gr.update()
-    if not rfc_a_eliminar:
-        return "❌ Selecciona un cliente / RFC válido.", gr.update(), gr.update(), gr.update()
-    
+        datos_saldo["Estatus"] = "En Trámite FED"
+        datos_saldo["Folio_FED"] = folio_fed
+        datos_saldo["Fecha_Ingreso_FED"] = fecha_ingreso
+
+        logo_path = logo_file.name if hasattr(logo_file, 'name') else logo_file
+        pdf_path = generar_pdf_expediente_fed_real(datos_saldo, logo_path)
+
+        registrar_log(email, "CONGELAR_FED", f"Saldo ID: {id_saldo} congelado por trámite FED {folio_fed}")
+        return f"✅ Saldo con ID {id_saldo} congelado exitosamente para Trámite FED.", pdf_path
+    except Exception as e:
+        return f"Error al congelar saldo para FED: {e}", None
+
+def resolver_tramite_fed(email, id_saldo, accion_resolucion, num_deposito, confirma_accion):
+    if not confirma_accion:
+        return "❌ Debes confirmar la casilla de verificación antes de procesar la resolución."
+    if not id_saldo:
+        return "❌ Selecciona un ID de saldo en trámite."
+
     try:
-        supabase.table("saldos_iva").delete().eq("usuario_email", email).eq("rfc", rfc_a_eliminar).execute()
-        supabase.table("historial_acreditamientos").delete().eq("usuario_email", email).eq("rfc", rfc_a_eliminar).execute()
-        registrar_log(email, "ELIMINAR_CLIENTE", f"RFC: {rfc_a_eliminar} borrado completamente")
-        
-        rfcs_actualizados = obtener_rfcs_unicos(email)
-        nuevo_val = rfcs_actualizados[0] if rfcs_actualizados else ""
-        upd = gr.update(choices=rfcs_actualizados, value=nuevo_val)
-        
-        return f"✅ Cliente **{rfc_a_eliminar}** y todo su historial fueron eliminados correctamente.", upd, upd, upd
-    except Exception as e:
-        return f"Error al eliminar cliente: {e}", gr.update(), gr.update(), gr.update()
+        if accion_resolucion == "Aprobado / Devuelto por el SAT":
+            if not num_deposito:
+                return "❌ Por favor ingresa el Número de Depósito / Autorización del SAT."
+            
+            supabase.table("saldos_iva").update({
+                "saldo_disponible": 0,
+                "estatus": "Devuelto / Pagado",
+                "observaciones_fed": f"Aprobado SAT. Depósito: {num_deposito}"
+            }).eq("id", int(id_saldo)).execute()
 
-def procesar_pdf(file_obj):
-    if file_obj is None:
-        return "", "", 0, "Enero", 2026, datetime.now().strftime("%Y-%m-%d"), "Normal"
-    datos, _ = extraer_datos_pdf(file_obj.name if hasattr(file_obj, 'name') else file_obj)
-    if datos:
-        return (
-            datos.get("rfc", ""),
-            datos.get("num_operacion", ""),
-            datos.get("saldo_favor", 0),
-            datos.get("mes", "Enero"),
-            datos.get("anio", 2026),
-            datos.get("fecha_pres", datetime.now().strftime("%Y-%m-%d")),
-            datos.get("tipo_declaracion", "Normal")
-        )
-    return "", "", 0, "Enero", 2026, datetime.now().strftime("%Y-%m-%d"), "Normal"
+            registrar_log(email, "PAGO_FED_APROBADO", f"Saldo ID: {id_saldo} devuelto por el SAT. Depósito: {num_deposito}")
+            return f"🎉 Saldo ID {id_saldo} marcado como DEVUELTO Y PAGADO por el SAT. El registro ha sido archivado en $0."
+
+        elif accion_resolucion == "Rechazado / Desistido (Descongelar)":
+            supabase.table("saldos_iva").update({
+                "estatus": "Vigente"
+            }).eq("id", int(id_saldo)).execute()
+
+            registrar_log(email, "DESCONGELAR_FED", f"Saldo ID: {id_saldo} descongelado por rechazo o desistimiento.")
+            return f"🔄 Saldo ID {id_saldo} ha sido DESCONGELADO y reincorporado como Vigente en el Motor FIFO."
+
+        return "Acción no reconocida."
+    except Exception as e:
+        return f"Error al resolver trámite FED: {e}"
 
 def guardar_declaracion_pdf(email, plan, rfc, mes, anio, tipo_dec, num_op, fecha_pres, saldo_orig, confirma_mod):
     rfc_limpio = rfc.upper().strip()
     num_op_limpio = str(num_op).replace(".0", "").strip()
-    rfcs_actuales = obtener_rfcs_unicos(email)
-    limite_rfc = 5 if ("basico" in str(plan).lower() or "básico" in str(plan).lower()) else 999999
     
-    if rfc_limpio not in rfcs_actuales and len(rfcs_actuales) >= limite_rfc:
-        return "🚫 Has alcanzado el límite de RFCs de tu plan.", gr.update(), gr.update(), gr.update()
     if not num_op_limpio:
         return "❌ El número de operación es obligatorio.", gr.update(), gr.update(), gr.update()
     
@@ -339,21 +441,12 @@ def guardar_declaracion_pdf(email, plan, rfc, mes, anio, tipo_dec, num_op, fecha
         check_dup = supabase.table("saldos_iva").select("id").eq("usuario_email", email).eq("num_operacion", num_op_limpio).execute()
         if check_dup.data:
             return f"❌ El Número de Operación '{num_op_limpio}' ya está registrado.", gr.update(), gr.update(), gr.update()
-        
-        if "Complementaria" in tipo_dec or confirma_mod:
-            supabase.table("saldos_iva").update({"estatus": "Sustituido"}).eq("usuario_email", email).eq("rfc", rfc_limpio).eq("periodo_mes", mes).eq("periodo_anio", int(anio)).execute()
 
         supabase.table("saldos_iva").insert({
-            "usuario_email": email,
-            "rfc": rfc_limpio,
-            "periodo_mes": mes,
-            "periodo_anio": int(anio),
-            "tipo_declaracion": tipo_dec,
-            "num_operacion": num_op_limpio,
-            "fecha_presentacion": str(fecha_pres),
-            "saldo_original": float(saldo_orig),
-            "saldo_disponible": float(saldo_orig),
-            "estatus": "Vigente"
+            "usuario_email": email, "rfc": rfc_limpio, "periodo_mes": mes,
+            "periodo_anio": int(anio), "tipo_declaracion": tipo_dec, "num_operacion": num_op_limpio,
+            "fecha_presentacion": str(fecha_pres), "saldo_original": float(saldo_orig),
+            "saldo_disponible": float(saldo_orig), "estatus": "Vigente"
         }).execute()
         
         registrar_log(email, "CARGA_DECLARACION_PDF", f"RFC: {rfc_limpio} | Monto: ${saldo_orig} MXN")
@@ -365,10 +458,8 @@ def guardar_declaracion_pdf(email, plan, rfc, mes, anio, tipo_dec, num_op, fecha
         return f"Error al registrar: {e}", gr.update(), gr.update(), gr.update()
 
 def ejecutar_fifo(email, rfc, monto, mes_dest, anio_dest):
-    if not rfc:
-        return "❌ Selecciona un RFC.", pd.DataFrame()
-    if monto <= 0:
-        return "❌ Ingresa un monto mayor a cero.", pd.DataFrame()
+    if not rfc: return "❌ Selecciona un RFC.", pd.DataFrame()
+    if monto <= 0: return "❌ Ingresa un monto mayor a cero.", pd.DataFrame()
     
     df_saldos = cargar_saldos(email)
     df_vigentes = df_saldos[(df_saldos["RFC"] == rfc) & (df_saldos["Estatus"] == "Vigente")].copy()
@@ -402,62 +493,35 @@ def ejecutar_fifo(email, rfc, monto, mes_dest, anio_dest):
             }).eq("id", int(row["ID"])).execute()
             
             payload_historial = {
-                "usuario_email": email,
-                "fecha_aplicacion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "rfc": rfc,
-                "periodo_origen": f"{row['Periodo_Mes']} {row['Periodo_Anio']}",
-                "num_operacion_origen": folio_limpio,
-                "saldo_anterior": float(saldo_anterior),
-                "monto_aplicado": float(usar),
-                "remanente_nuevo": float(remanente_nuevo),
+                "usuario_email": email, "fecha_aplicacion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "rfc": rfc, "periodo_origen": f"{row['Periodo_Mes']} {row['Periodo_Anio']}",
+                "num_operacion_origen": folio_limpio, "saldo_anterior": float(saldo_anterior),
+                "monto_aplicado": float(usar), "remanente_nuevo": float(remanente_nuevo),
                 "periodo_destino": periodo_destino_str
             }
             supabase.table("historial_acreditamientos").insert(payload_historial).execute()
             
             desglose_sat.append({
-                "Declaración / Periodo Aplicado (Destino)": periodo_destino_str,
-                "Periodo de Origen": f"{row['Periodo_Mes']} {row['Periodo_Anio']}",
-                "Fecha de Presentación": str(row.get('Fecha_Presentacion', 'N/A')),
-                "Número de Operación / Folio SAT": folio_limpio,
-                "Saldo Original Declarado": f"${saldo_original:,} MXN",
-                "Saldo Insoluto Anterior": f"${saldo_anterior:,} MXN",
-                "Monto Acreditado / Aplicado": f"${usar:,} MXN",
-                "Saldo Remanente Posterior": f"${remanente_nuevo:,} MXN"
+                "Declaración Destino": periodo_destino_str, "Periodo Origen": f"{row['Periodo_Mes']} {row['Periodo_Anio']}",
+                "Folio SAT": folio_limpio, "Monto Acreditado": f"${usar:,} MXN", "Remanente": f"${remanente_nuevo:,} MXN"
             })
 
         registrar_log(email, "EJECUCION_FIFO", f"RFC: {rfc} | Aplicado en {periodo_destino_str} | Monto: ${monto} MXN")
-        return f"¡Acreditamiento FIFO aplicado con éxito para {periodo_destino_str}!", pd.DataFrame(desglose_sat)
+        return f"¡Acreditamiento FIFO aplicado con éxito!", pd.DataFrame(desglose_sat)
     except Exception as e:
         return f"Error al ejecutar: {e}", pd.DataFrame()
 
 def obtener_historial_vista(email, rfc):
     df_hist = cargar_historial(email)
-    if df_hist.empty:
-        return pd.DataFrame(), gr.update(choices=[]), None
+    if df_hist.empty: return pd.DataFrame(), gr.update(choices=[]), None
     df_cliente = df_hist[df_hist["RFC"] == rfc] if rfc else df_hist
-    if df_cliente.empty:
-        return pd.DataFrame(), gr.update(choices=[]), None
+    if df_cliente.empty: return pd.DataFrame(), gr.update(choices=[]), None
     
     cols = [c for c in ["ID", "Fecha_Aplicacion", "RFC", "Periodo_Origen", "Declaracion_Aplicada_Destino", "Num_Operacion_Origen", "Saldo_Anterior", "Monto_Aplicado", "Remanente_Nuevo"] if c in df_cliente.columns]
     df_disp = df_cliente[cols]
     ids = df_disp["ID"].tolist()
-    
-    # Generar archivo Excel para descarga del historial
     ruta_excel_hist = exportar_dataframe_excel(df_disp, f"Historial_Acreditamientos_{rfc if rfc else 'General'}")
-    
     return df_disp, gr.update(choices=ids, value=ids[0] if ids else None), ruta_excel_hist
-
-def eliminar_historial_item(email, id_item, confirma):
-    if not confirma:
-        return "❌ Debes confirmar la casilla para eliminar."
-    if not id_item:
-        return "❌ Selecciona un ID válido."
-    try:
-        supabase.table("historial_acreditamientos").delete().eq("id", int(id_item)).execute()
-        registrar_log(email, "ELIMINAR_REGISTRO_HISTORIAL", f"ID: {id_item} eliminado")
-        return "¡Registro de historial eliminado correctamente!"
-    except Exception as e:
-        return f"Error al eliminar: {e}"
 
 # --- CONSTRUCCIÓN DE INTERFAZ GRADIO ---
 with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
@@ -465,10 +529,10 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
     state_email = gr.State("")
     state_plan = gr.State("")
 
-    # Vista de Login
+    # Panel de Login
     with gr.Column(visible=True) as panel_login:
         gr.Markdown("""
-            <div style="max-width: 480px; margin: 30px auto; padding: 20px; background: white; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center;">
+            <div style="max-width: 480px; margin: 30px auto; padding: 20px; background: white; border-radius: 12px; text-align: center;">
                 <h2 style="color: #1e3c72; margin-bottom: 5px;">🏛️ Bóveda IVA Pro</h2>
                 <p style="color: #64748b; font-size: 0.9rem;">Plataforma inteligente de gestión y acreditamiento de IVA.</p>
             </div>
@@ -476,13 +540,13 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
         with gr.Row():
             with gr.Column(scale=1): pass
             with gr.Column(scale=2):
-                txt_user = gr.Textbox(label="Usuario (Correo Electrónico)", placeholder="correo@ejemplo.com")
-                txt_pass = gr.Textbox(label="Contraseña de Acceso", type="password")
+                txt_user = gr.Textbox(label="Usuario (Correo)", placeholder="correo@ejemplo.com")
+                txt_pass = gr.Textbox(label="Contraseña", type="password")
                 btn_ingresar = gr.Button("Iniciar Sesión", variant="primary")
                 lbl_msg = gr.Markdown()
             with gr.Column(scale=1): pass
 
-    # Vista Principal de la App (Protegida)
+    # Panel de Aplicación
     with gr.Column(visible=False) as panel_app:
         html_header = gr.HTML()
         
@@ -498,43 +562,50 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
                 with gr.Row():
                     btn_descargar_resumen_excel = gr.DownloadButton("📥 Descargar Resumen en Excel", variant="secondary")
 
-                with gr.Row():
-                    drop_id_del = gr.Dropdown(label="Seleccionar ID de Declaración a Eliminar", choices=[])
-                    chk_confirma_del = gr.Checkbox(label="Confirmo eliminar este registro individual")
-                    btn_eliminar_reg = gr.Button("🗑️ Eliminar Registro Seleccionado", variant="stop")
-                lbl_del_res = gr.Markdown()
-
                 gr.Markdown("---")
-                gr.Markdown("### ⚠️ Gestión de Clientes")
+                gr.Markdown("### 🏛️ Módulo FED (Formato Electrónico de Devoluciones) — Devolución de IVA")
                 with gr.Row():
-                    chk_confirma_del_cliente = gr.Checkbox(label="Confirmo ELIMINAR COMPLETAMENTE al cliente seleccionado arriba y todo su historial")
-                    btn_eliminar_cliente = gr.Button("🚨 Eliminar Cliente Completo", variant="stop")
-                lbl_del_cliente_res = gr.Markdown()
+                    drop_id_fed = gr.Dropdown(label="Seleccionar ID de Saldo a Solicitar en Devolución FED", choices=[])
+                    txt_folio_fed = gr.Textbox(label="Folio de Trámite SAT / Registro Único", placeholder="AV2026101899211")
+                    date_ingreso_fed = gr.Textbox(label="Fecha de Ingreso SAT", value=datetime.now().strftime("%Y-%m-%d"))
+                
+                with gr.Row():
+                    file_logo_fed = gr.File(label="Subir Logo del Despacho / Empresa (Opcional para PDF)", file_types=[".png", ".jpg", ".jpeg"])
+                    txt_obs_fed = gr.Textbox(label="Observaciones o Referencia Interna", placeholder="Trámite de devolución ejercicio 2025")
+
+                with gr.Row():
+                    btn_congelar_fed = gr.Button("🔒 Congelar Saldo y Generar Expediente FED (PDF)", variant="primary")
+                    btn_descargar_pdf_fed = gr.DownloadButton("📄 Descargar Expediente FED (PDF)", variant="secondary")
+                
+                lbl_fed_res = gr.Markdown()
+
+                gr.Markdown("#### ⚖️ Resolución del Trámite FED")
+                with gr.Row():
+                    rad_resolucion_fed = gr.Radio(choices=["Aprobado / Devuelto por el SAT", "Rechazado / Desistido (Descongelar)"], label="Seleccionar Resultado del SAT", value="Aprobado / Devuelto por el SAT")
+                    txt_deposito_sat = gr.Textbox(label="Número de Depósito / Autorización SAT (Requerido si fue Aprobado)", placeholder="DEP-9821873")
+                    chk_confirma_resolucion = gr.Checkbox(label="Confirmo aplicar esta resolución definitiva")
+                    btn_resolver_fed = gr.Button("⚙️ Procesar Resolución FED", variant="stop")
+                
+                lbl_resolucion_res = gr.Markdown()
 
             with gr.TabItem("📥 Carga de Declaraciones (PDF)"):
-                gr.Markdown("### Sube la declaración en formato PDF para extraer los datos automáticamente o regístrala de forma manual.")
+                file_pdf = gr.File(label="Subir Declaración PDF del SAT", file_types=[".pdf"])
                 with gr.Row():
-                    file_pdf = gr.File(label="Subir Declaración PDF del SAT", file_types=[".pdf"])
-                
-                with gr.Row():
-                    txt_rfc_pdf = gr.Textbox(label="RFC del Contribuyente")
+                    txt_rfc_pdf = gr.Textbox(label="RFC Contribuyente")
                     drop_mes_pdf = gr.Dropdown(label="Periodo (Mes)", choices=["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"], value="Enero")
                     num_anio_pdf = gr.Number(label="Ejercicio (Año)", value=2026, precision=0)
-                
                 with gr.Row():
-                    drop_tipo_pdf = gr.Dropdown(label="Tipo de Declaración", choices=["Normal", "Complementaria - Modificación", "Complementaria - Dejar sin Efecto"], value="Normal")
-                    txt_num_op_pdf = gr.Textbox(label="Número de Operación / Folio SAT")
-                    date_pres_pdf = gr.Textbox(label="Fecha de Presentación (YYYY-MM-DD)", value=datetime.now().strftime("%Y-%m-%d"))
-                
+                    drop_tipo_pdf = gr.Dropdown(label="Tipo Declaración", choices=["Normal", "Complementaria - Modificación", "Complementaria - Dejar sin Efecto"], value="Normal")
+                    txt_num_op_pdf = gr.Textbox(label="Número de Operación SAT")
+                    date_pres_pdf = gr.Textbox(label="Fecha Presentación (YYYY-MM-DD)", value=datetime.now().strftime("%Y-%m-%d"))
                 with gr.Row():
-                    num_saldo_pdf = gr.Number(label="Monto del Saldo a Favor ($)", value=0)
-                    chk_mod_pdf = gr.Checkbox(label="Sustituir declaración anterior del mismo periodo")
+                    num_saldo_pdf = gr.Number(label="Saldo a Favor ($)", value=0)
+                    chk_mod_pdf = gr.Checkbox(label="Sustituir declaración anterior")
                 
                 btn_guardar_pdf = gr.Button("💾 Registrar en Bóveda", variant="primary")
                 lbl_guardar_pdf_res = gr.Markdown()
 
             with gr.TabItem("⚙️ Motor FIFO / Acreditamiento"):
-                gr.Markdown("### Aplica tus saldos a favor vigentes de manera cronológica (método FIFO).")
                 with gr.Row():
                     drop_rfc_fifo = gr.Dropdown(label="Seleccionar RFC", choices=[], interactive=True)
                     num_monto_fifo = gr.Number(label="Monto a Aplicar ($)")
@@ -544,95 +615,66 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Bóveda IVA Pro") as demo:
                 
                 btn_ejecutar_fifo = gr.Button("🚀 Ejecutar Acreditamiento FIFO", variant="primary")
                 lbl_fifo_res = gr.Markdown()
-                tabla_fifo_desglose = gr.DataFrame(label="Desglose del Acreditamiento Aplicado")
+                tabla_fifo_desglose = gr.DataFrame(label="Desglose Acreditamiento")
 
             with gr.TabItem("📜 Historial"):
                 with gr.Row():
                     drop_rfc_hist = gr.Dropdown(label="Filtrar por RFC", choices=[], interactive=True)
                     btn_ver_hist = gr.Button("🔍 Consultar Historial")
                 
-                tabla_historial = gr.DataFrame(label="Historial de Acreditamientos Aplicados")
-                with gr.Row():
-                    btn_descargar_historial_excel = gr.DownloadButton("📥 Descargar Historial en Excel", variant="secondary")
+                tabla_historial = gr.DataFrame(label="Historial de Acreditamientos")
+                btn_descargar_historial_excel = gr.DownloadButton("📥 Descargar Historial en Excel", variant="secondary")
 
-                with gr.Row():
-                    drop_id_hist = gr.Dropdown(label="ID de Historial a Eliminar", choices=[])
-                    chk_confirma_hist = gr.Checkbox(label="Confirmo eliminar este registro del historial")
-                    btn_del_hist = gr.Button("🗑️ Eliminar Historial Seleccionado", variant="stop")
-                lbl_hist_del_res = gr.Markdown()
-
-    # --- ENLACES DE EVENTOS ---
+    # --- VÍNCULOS DE EVENTOS ---
     btn_ingresar.click(
-        fn=login_usuario,
-        inputs=[txt_user, txt_pass],
+        fn=login_usuario, inputs=[txt_user, txt_pass],
         outputs=[lbl_msg, panel_login, panel_app, html_header, state_email, state_plan, drop_rfc_resumen, drop_rfc_fifo, drop_rfc_hist]
     )
 
-    # Actualizar vista de Resumen al seleccionar cliente
     drop_rfc_resumen.change(
-        fn=actualizar_vista_resumen,
-        inputs=[state_email, drop_rfc_resumen],
-        outputs=[html_metricas, tabla_saldos_resumen, drop_id_del, btn_descargar_resumen_excel]
+        fn=actualizar_vista_resumen, inputs=[state_email, drop_rfc_resumen],
+        outputs=[html_metricas, tabla_saldos_resumen, gr.Dropdown(), btn_descargar_resumen_excel, drop_id_fed]
     )
 
     btn_actualizar_resumen.click(
-        fn=actualizar_vista_resumen,
-        inputs=[state_email, drop_rfc_resumen],
-        outputs=[html_metricas, tabla_saldos_resumen, drop_id_del, btn_descargar_resumen_excel]
+        fn=actualizar_vista_resumen, inputs=[state_email, drop_rfc_resumen],
+        outputs=[html_metricas, tabla_saldos_resumen, gr.Dropdown(), btn_descargar_resumen_excel, drop_id_fed]
     )
 
-    btn_eliminar_reg.click(
-        fn=eliminar_registro_saldos,
-        inputs=[state_email, drop_id_del, chk_confirma_del],
-        outputs=[lbl_del_res]
+    btn_congelar_fed.click(
+        fn=procesar_solicitud_fed, inputs=[state_email, drop_id_fed, txt_folio_fed, date_ingreso_fed, txt_obs_fed, file_logo_fed],
+        outputs=[lbl_fed_res, btn_descargar_pdf_fed]
     ).then(
-        fn=actualizar_vista_resumen,
-        inputs=[state_email, drop_rfc_resumen],
-        outputs=[html_metricas, tabla_saldos_resumen, drop_id_del, btn_descargar_resumen_excel]
+        fn=actualizar_vista_resumen, inputs=[state_email, drop_rfc_resumen],
+        outputs=[html_metricas, tabla_saldos_resumen, gr.Dropdown(), btn_descargar_resumen_excel, drop_id_fed]
     )
 
-    # Eliminar cliente completo
-    btn_eliminar_cliente.click(
-        fn=eliminar_cliente_completo,
-        inputs=[state_email, drop_rfc_resumen, chk_confirma_del_cliente],
-        outputs=[lbl_del_cliente_res, drop_rfc_resumen, drop_rfc_fifo, drop_rfc_hist]
+    btn_resolver_fed.click(
+        fn=resolver_tramite_fed, inputs=[state_email, drop_id_fed, rad_resolucion_fed, txt_deposito_sat, chk_confirma_resolucion],
+        outputs=[lbl_resolucion_res]
+    ).then(
+        fn=actualizar_vista_resumen, inputs=[state_email, drop_rfc_resumen],
+        outputs=[html_metricas, tabla_saldos_resumen, gr.Dropdown(), btn_descargar_resumen_excel, drop_id_fed]
     )
 
-    # Procesar PDF automáticamente
     file_pdf.change(
-        fn=procesar_pdf,
-        inputs=[file_pdf],
+        fn=extraer_datos_pdf, inputs=[file_pdf],
         outputs=[txt_rfc_pdf, txt_num_op_pdf, num_saldo_pdf, drop_mes_pdf, num_anio_pdf, date_pres_pdf, drop_tipo_pdf]
     )
 
     btn_guardar_pdf.click(
-        fn=guardar_declaracion_pdf,
-        inputs=[state_email, state_plan, txt_rfc_pdf, drop_mes_pdf, num_anio_pdf, drop_tipo_pdf, txt_num_op_pdf, date_pres_pdf, num_saldo_pdf, chk_mod_pdf],
+        fn=guardar_declaracion_pdf, inputs=[state_email, state_plan, txt_rfc_pdf, drop_mes_pdf, num_anio_pdf, drop_tipo_pdf, txt_num_op_pdf, date_pres_pdf, num_saldo_pdf, chk_mod_pdf],
         outputs=[lbl_guardar_pdf_res, drop_rfc_resumen, drop_rfc_fifo, drop_rfc_hist]
     )
 
-    # FIFO
     btn_ejecutar_fifo.click(
-        fn=ejecutar_fifo,
-        inputs=[state_email, drop_rfc_fifo, num_monto_fifo, drop_mes_dest, num_anio_dest],
+        fn=ejecutar_fifo, inputs=[state_email, drop_rfc_fifo, num_monto_fifo, drop_mes_dest, num_anio_dest],
         outputs=[lbl_fifo_res, tabla_fifo_desglose]
     )
 
-    # Historial
     btn_ver_hist.click(
-        fn=obtener_historial_vista,
-        inputs=[state_email, drop_rfc_hist],
-        outputs=[tabla_historial, drop_id_hist, btn_descargar_historial_excel]
-    )
-
-    btn_del_hist.click(
-        fn=eliminar_historial_item,
-        inputs=[state_email, drop_id_hist, chk_confirma_hist],
-        outputs=[lbl_hist_del_res]
-    ).then(
-        fn=obtener_historial_vista,
-        inputs=[state_email, drop_rfc_hist],
-        outputs=[tabla_historial, drop_id_hist, btn_descargar_historial_excel]
+        fn=obtener_historial_vista, inputs=[state_email, drop_rfc_hist],
+        outputs=[tabla_historial, gr.Dropdown(), btn_descargar_historial_excel]
     )
 
 if __name__ == "__main__":
