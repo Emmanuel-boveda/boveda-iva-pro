@@ -133,28 +133,47 @@ def obtener_o_crear_plantilla_excel():
 
 PLANTILLA_EXCEL_PATH = obtener_o_crear_plantilla_excel()
 
-def generar_html_tabla_planes(email_usuario=""):
-    email_ref = email_usuario if email_usuario else "Nuevo Cliente"
+def calcular_codigo_invitacion(email_referidor):
+    if not email_referidor or "@" not in email_referidor:
+        return ""
+    partes = email_referidor.split("@")[0].strip().lower()
+    solo_letras = re.sub(r'[^a-z]', '', partes)
+    num_letras = len(solo_letras)
+    return f"{solo_letras}{num_letras:02d}"
+
+def generar_html_tabla_planes(codigo_referido=""):
+    ref_txt_mensual = f" (Código de referido: {codigo_referido})" if codigo_referido else ""
+    ref_txt_anual = f" (Código de referido: {codigo_referido} - APLICA PROMOCIÓN: +1 MES GRATIS PARA EL NUEVO CLIENTE Y +2 MESES PARA QUIEN REFIRIÓ AL CONTRATAR PLAN ANUAL)" if codigo_referido else ""
     
-    msg_bm = urllib.parse.quote(f"Hola, deseo contratar el Plan Básico Mensual ($49 MXN) de Bóveda IVA Pro. Mi correo es: {email_ref}")
-    msg_ba = urllib.parse.quote(f"Hola, deseo contratar el Plan Básico Anual ($399 MXN) de Bóveda IVA Pro. Mi correo es: {email_ref}")
-    msg_im = urllib.parse.quote(f"Hola, deseo contratar el Plan Ilimitado Mensual ($99 MXN) de Bóveda IVA Pro. Mi correo es: {email_ref}")
-    msg_ia = urllib.parse.quote(f"Hola, deseo contratar el Plan Ilimitado Anual ($999 MXN) de Bóveda IVA Pro. Mi correo es: {email_ref}")
+    msg_bm = urllib.parse.quote(f"Hola, deseo contratar el Plan Básico Mensual ($49 MXN) de Bóveda IVA Pro.{ref_txt_mensual}")
+    msg_ba = urllib.parse.quote(f"Hola, deseo contratar el Plan Básico Anual ($399 MXN) de Bóveda IVA Pro.{ref_txt_anual}")
+    msg_im = urllib.parse.quote(f"Hola, deseo contratar el Plan Ilimitado Mensual ($99 MXN) de Bóveda IVA Pro.{ref_txt_mensual}")
+    msg_ia = urllib.parse.quote(f"Hola, deseo contratar el Plan Ilimitado Anual ($999 MXN) de Bóveda IVA Pro.{ref_txt_anual}")
 
     link_bm = f"https://wa.me/{TELEFONO_WHATSAPP}?text={msg_bm}"
     link_ba = f"https://wa.me/{TELEFONO_WHATSAPP}?text={msg_ba}"
     link_im = f"https://wa.me/{TELEFONO_WHATSAPP}?text={msg_im}"
     link_ia = f"https://wa.me/{TELEFONO_WHATSAPP}?text={msg_ia}"
 
+    banner_ref = ""
+    if codigo_referido:
+        banner_ref = f"""
+        <div style="background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; padding: 12px; border-radius: 8px; text-align: center; margin-bottom: 20px; font-size: 0.9rem;">
+            🎉 <b>¡Código de referido aplicado ({codigo_referido})!</b><br/>
+            Al contratar cualquier <b>Plan Anual</b>, obtienes <b>+1 MES GRATIS</b> y tu colega que te invitó recibe <b>+2 MESES GRATIS</b> adicionales.
+        </div>
+        """
+
     return f"""
-    <div style="max-width: 900px; margin: 30px auto; padding: 10px;">
-        <h3 style="color: #1e3c72; text-align: center; margin-bottom: 25px; font-size: 1.5rem;">💳 Planes y Suscripciones — Bóveda IVA Pro</h3>
+    <div style="max-width: 900px; margin: 10px auto; padding: 10px;">
+        {banner_ref}
+        <h3 style="color: #1e3c72; text-align: center; margin-bottom: 20px; font-size: 1.4rem;">💳 Planes y Suscripciones — Bóveda IVA Pro</h3>
         <div style="display: flex; gap: 20px; justify-content: center; flex-wrap: wrap;">
             
             <!-- PLAN BÁSICO -->
             <div style="background: #ffffff; border: 2px solid #cbd5e1; border-radius: 12px; padding: 25px; width: 320px; text-align: center; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
-                <h3 style="color: #1e3c72; margin-top: 0; font-size: 1.4rem;">Plan Básico</h3>
-                <p style="font-size: 0.85rem; color: #64748b;">Ideal para despachos con hasta 5 RFCs de clientes.</p>
+                <h3 style="color: #1e3c72; margin-top: 0; font-size: 1.3rem;">Plan Básico</h3>
+                <p style="font-size: 0.85rem; color: #64748b;">Hasta 5 RFCs de clientes.</p>
                 <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 15px 0;">
                 <p style="font-size: 1.8rem; font-weight: bold; color: #0f172a; margin: 5px 0;">$49 <span style="font-size: 0.9rem; font-weight: normal; color: #64748b;">MXN / mes</span></p>
                 <p style="font-size: 1.1rem; font-weight: bold; color: #16a34a; margin: 5px 0;">o $399 <span style="font-size: 0.8rem; font-weight: normal; color: #64748b;">MXN / año</span></p>
@@ -167,8 +186,8 @@ def generar_html_tabla_planes(email_usuario=""):
             <!-- PLAN ILIMITADO -->
             <div style="background: #ffffff; border: 2px solid #2a5298; border-radius: 12px; padding: 25px; width: 320px; text-align: center; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); position: relative;">
                 <div style="position: absolute; top: -12px; right: 20px; background: #2a5298; color: white; padding: 3px 12px; border-radius: 10px; font-size: 0.75rem; font-weight: bold;">MÁS POPULAR</div>
-                <h3 style="color: #2a5298; margin-top: 0; font-size: 1.4rem;">Plan Ilimitado</h3>
-                <p style="font-size: 0.85rem; color: #64748b;">RFCs e importaciones masivas ilimitadas.</p>
+                <h3 style="color: #2a5298; margin-top: 0; font-size: 1.3rem;">Plan Ilimitado</h3>
+                <p style="font-size: 0.85rem; color: #64748b;">RFCs e importaciones ilimitadas.</p>
                 <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 15px 0;">
                 <p style="font-size: 1.8rem; font-weight: bold; color: #0f172a; margin: 5px 0;">$99 <span style="font-size: 0.9rem; font-weight: normal; color: #64748b;">MXN / mes</span></p>
                 <p style="font-size: 1.1rem; font-weight: bold; color: #16a34a; margin: 5px 0;">o $999 <span style="font-size: 0.8rem; font-weight: normal; color: #64748b;">MXN / año</span></p>
@@ -181,6 +200,12 @@ def generar_html_tabla_planes(email_usuario=""):
         </div>
     </div>
     """
+
+def actualizar_enlace_referido(email_ref_input):
+    codigo = calcular_codigo_invitacion(email_ref_input)
+    html_actualizado = generar_html_tabla_planes(codigo)
+    msg_info = f"✅ Código de referido activo: **{codigo}**. Al seleccionar un **Plan Anual**, se sumará **+1 mes gratis** para el nuevo cliente y **+2 meses gratis** para {email_ref_input}." if codigo else "ℹ️ Ingresa el correo para aplicar la promoción de plan anual."
+    return html_actualizado, msg_info
 
 def procesar_carga_masiva_excel(email, plan, archivo_excel):
     if archivo_excel is None:
@@ -588,6 +613,8 @@ def login_usuario(email, password):
             
             tipo_plan = user_data.get("plan", "Plan Básico")
             fecha_exp_str = str(user_data.get("fecha_expiracion", "Indefinida"))
+            if not fecha_exp_str or fecha_exp_str == "None":
+                fecha_exp_str = "Indefinida"
             
             header_html = f'<div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); padding: 18px; border-radius: 10px; color: white; margin-bottom: 15px;"><h2 style="margin:0; font-size: 1.8rem;">🏛️ Bóveda IVA Pro</h2><p style="margin:5px 0 0 0; color: #e0e7ff;">Bienvenido, <b>{email}</b> | Plan: <b>{tipo_plan}</b> | Vence: <b>{fecha_exp_str}</b></p></div>'
 
@@ -603,7 +630,7 @@ def login_usuario(email, password):
 def inicializar_panel_usuario(email):
     rfcs = obtener_rfcs_unicos(email)
     val_inicial = rfcs[0] if rfcs else None
-    html_pagos_interno = generar_html_tabla_planes(email)
+    html_pagos_interno = generar_html_tabla_planes("")
 
     upd = gr.update(choices=rfcs, value=val_inicial)
     return upd, upd, upd, html_pagos_interno
@@ -799,10 +826,10 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
     state_email = gr.State("")
     state_plan = gr.State("")
 
-    # 1. Panel Público (Login + Tabla de Planes visible para nuevos clientes)
+    # 1. Panel Público (Login + Sistema de Referidos + Planes)
     with gr.Column(visible=True) as panel_login:
         gr.Markdown("""
-            <div style="max-width: 480px; margin: 30px auto 15px auto; padding: 25px; background: white; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+            <div style="max-width: 480px; margin: 20px auto 10px auto; padding: 20px; background: white; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
                 <h2 style="color: #1e3c72; margin-bottom: 5px;">🏛️ Bóveda IVA Pro</h2>
                 <p style="color: #64748b; font-size: 0.9rem;">Plataforma inteligente de gestión y acreditamiento de IVA.</p>
             </div>
@@ -816,8 +843,18 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
                 lbl_msg = gr.Markdown()
             with gr.Column(scale=1): pass
 
-        # PLANES Y TARIFAS PÚBLICAS (Visibles sin iniciar sesión)
-        gr.HTML(value=generar_html_tabla_planes(""))
+        # SECCIÓN DE CÓDIGO DE INVITACIÓN / REFERIDO
+        with gr.Row():
+            with gr.Column(scale=1): pass
+            with gr.Column(scale=2):
+                gr.Markdown("---")
+                gr.Markdown("### 🤝 ¿Tienes un código de referido?")
+                txt_referido_input = gr.Textbox(label="Ingresa el correo del colega que te invitó", placeholder="ej. contador@gmail.com")
+                lbl_referido_info = gr.Markdown("ℹ️ Al contratar un paquete anual con código de referido, recibes **+1 Mes Gratis** y tu colega recibe **+2 Meses Gratis**.")
+            with gr.Column(scale=1): pass
+
+        # PLANES Y TARIFAS PÚBLICAS CON CÓDIGO DE REFERIDO
+        html_tabla_planes_pub = gr.HTML(value=generar_html_tabla_planes(""))
 
     # 2. Panel Privado (App para usuarios autenticados)
     with gr.Column(visible=False) as panel_app:
@@ -941,6 +978,11 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
         outputs=[drop_rfc_resumen, drop_rfc_fifo, drop_rfc_hist, html_vista_pagos_interno]
     )
 
+    txt_referido_input.change(
+        fn=actualizar_enlace_referido, inputs=[txt_referido_input],
+        outputs=[html_tabla_planes_pub, lbl_referido_info]
+    )
+
     drop_rfc_resumen.change(
         fn=actualizar_vista_resumen, inputs=[state_email, drop_rfc_resumen],
         outputs=[html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_fed, drop_id_eliminar_boveda]
@@ -953,7 +995,7 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
 
     btn_eliminar_boveda.click(
         fn=eliminar_registro_boveda, inputs=[state_email, drop_id_eliminar_boveda, drop_rfc_resumen],
-        outputs=[lbl_eliminar_boveda_res, html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_fed, drop_id_eliminar_boveda]
+        outputs=[lbl_eliminar_boveda_res, html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_eliminar_boveda]
     )
 
     btn_congelar_fed.click(
