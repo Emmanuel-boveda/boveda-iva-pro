@@ -351,9 +351,7 @@ def eliminar_cliente_completo(email, rfc_a_borrar):
     if not rfc_a_borrar:
         return "❌ Por favor selecciona un RFC de cliente válido para eliminar.", gr.update(choices=[], value=None), gr.update(choices=[], value=None), gr.update(choices=[], value=None), "### Selecciona o registra un cliente.", pd.DataFrame(), None, gr.update(choices=[], value=None), gr.update(choices=[], value=None)
     try:
-        # 1. Eliminar todos los saldos/declaraciones de ese RFC
         supabase.table("saldos_iva").delete().eq("usuario_email", email).eq("rfc", rfc_a_borrar).execute()
-        # 2. Eliminar su historial de acreditamientos asociado a ese RFC
         supabase.table("historial_acreditamientos").delete().eq("usuario_email", email).eq("rfc", rfc_a_borrar).execute()
         
         registrar_log(email, "ELIMINAR_CLIENTE_COMPLETO", f"Cliente RFC {rfc_a_borrar} eliminado totalmente.")
@@ -363,10 +361,15 @@ def eliminar_cliente_completo(email, rfc_a_borrar):
         
         msg = f"🗑️ El cliente con RFC **{rfc_a_borrar}** y todos sus registros asociados fueron eliminados permanentemente."
         
+        # Limpieza absoluta de los dropdowns para evitar el error de valor no en lista
         upd_res = gr.update(choices=nuevos_rfcs, value=val_ini)
-        res_act = actualizar_vista_resumen(email, val_ini)
         
-        return msg, upd_res, upd_res, upd_res, res_act[0], res_act[1], res_act[2], res_act[3], res_act[4]
+        if val_ini:
+            res_act = actualizar_vista_resumen(email, val_ini)
+            return msg, upd_res, upd_res, upd_res, res_act[0], res_act[1], res_act[2], res_act[3], res_act[4]
+        else:
+            return msg, upd_res, upd_res, upd_res, "### Sin clientes registrados.", pd.DataFrame(), None, gr.update(choices=[], value=None), gr.update(choices=[], value=None)
+            
     except Exception as e:
         return f"Error al eliminar cliente: {e}", gr.update(), gr.update(), gr.update(), "### Error", pd.DataFrame(), None, gr.update(), gr.update()
 
@@ -648,12 +651,11 @@ def login_usuario(email, password):
             
             tipo_plan = user_data.get("plan", "Plan Básico")
             
-            # LECTURA ROBUSTA CONSIDERANDO LA COLUMNA CON Y SIN ACENTO EN SUPABASE
             fecha_exp_val = (
                 user_data.get("fecha_expiración") or 
-                user_data.get("fecha_expiración") or 
+                user_data.get("fecha_expiracion") or 
                 user_data.get("fecha_vencimiento") or 
-                user_data.get("expiración")
+                user_data.get("expiracion")
             )
             
             if fecha_exp_val and str(fecha_exp_val).strip() not in ["None", "null", ""]:
@@ -661,10 +663,8 @@ def login_usuario(email, password):
             else:
                 fecha_exp_str = "Indefinida"
             
-            # Cálculo del código de referido exclusivo del usuario autenticado
             codigo_usuario = calcular_codigo_invitacion(email)
             
-            # Encabezado con color Verde Menta (#8BC4B9) solicitado
             header_html = f'''
             <div style="background: linear-gradient(135deg, #8BC4B9 0%, #6BA89B 100%); padding: 18px 22px; border-radius: 10px; color: #0f172a; margin-bottom: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">
                 <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
@@ -1067,9 +1067,21 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
         outputs=[html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_fed, drop_id_eliminar_boveda, drop_rfc_eliminar_cliente]
     )
 
+    # Actualizado: Ahora limpia adecuadamente todos los selectores al eliminar un cliente completo
     btn_eliminar_cliente.click(
         fn=eliminar_cliente_completo, inputs=[state_email, drop_rfc_eliminar_cliente],
-        outputs=[lbl_eliminar_cliente_res, drop_rfc_resumen, drop_rfc_fifo, drop_rfc_hist, html_metricas, tabla_saldos_resumen, file_descargar_resumen, drop_id_fed, drop_id_eliminar_boveda]
+        outputs=[
+            lbl_eliminar_cliente_res, 
+            drop_rfc_resumen, 
+            drop_rfc_fifo, 
+            drop_rfc_hist, 
+            drop_rfc_eliminar_cliente, 
+            html_metricas, 
+            tabla_saldos_resumen, 
+            file_descargar_resumen, 
+            drop_id_fed, 
+            drop_id_eliminar_boveda
+        ]
     )
 
     btn_eliminar_boveda.click(
