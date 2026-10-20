@@ -110,22 +110,21 @@ def exportar_dataframe_excel(df, nombre_archivo):
         return None
 
 def obtener_o_crear_plantilla_excel():
-    ruta = "./Plantilla_Carga_Masiva_BovedaIVA.xlsx"
-    if not os.path.exists(ruta):
-        datos_ejemplo = [
-            {
-                "RFC": "XAXX010101000", "Periodo_Mes": "Enero", "Periodo_Anio": 2026,
-                "Tipo_Declaracion": "Normal", "Num_Operacion": "100200300",
-                "Fecha_Presentacion": "2026-02-17", "Saldo_Original": 15000
-            },
-            {
-                "RFC": "XAXX010101000", "Periodo_Mes": "Febrero", "Periodo_Anio": 2026,
-                "Tipo_Declaracion": "Normal", "Num_Operacion": "100200301",
-                "Fecha_Presentacion": "2026-03-17", "Saldo_Original": 22500
-            }
-        ]
-        df_plantilla = pd.DataFrame(datos_ejemplo)
-        df_plantilla.to_excel(ruta, index=False, engine='openpyxl')
+    ruta = "./Plantilla_Carga_Masiva_BovedaIVA_v2.xlsx"
+    datos_ejemplo = [
+        {
+            "RFC": "XAXX010101000", "Periodo_Mes": "Enero", "Ejercicio": 2026,
+            "Tipo_Declaracion": "Normal", "Num_Operacion": "100200300",
+            "Fecha_Presentacion": "2026-02-17", "Saldo_Original": 15000, "Remanente": 15000
+        },
+        {
+            "RFC": "XAXX010101000", "Periodo_Mes": "Febrero", "Ejercicio": 2026,
+            "Tipo_Declaracion": "Normal", "Num_Operacion": "100200301",
+            "Fecha_Presentacion": "2026-03-17", "Saldo_Original": 22500, "Remanente": 10000
+        }
+    ]
+    df_plantilla = pd.DataFrame(datos_ejemplo)
+    df_plantilla.to_excel(ruta, index=False, engine='openpyxl')
     return ruta
 
 PLANTILLA_EXCEL_PATH = obtener_o_crear_plantilla_excel()
@@ -140,10 +139,23 @@ def procesar_carga_masiva_excel(email, plan, archivo_excel):
     except Exception as e:
         return f"❌ Error al leer el archivo Excel: {str(e)}", gr.update(), gr.update(), gr.update()
 
+    # Normalizar nombres de columnas por si el usuario usa minúsculas o variaciones
+    df_excel.columns = [str(c).strip().capitalize() for c in df_excel.columns]
+
+    # Mapeo de columnas requeridas permitiendo variantes comunes
+    col_map_inversa = {
+        "Rfc": "RFC", "Periodo_mes": "Periodo_Mes", "Periodo_anio": "Periodo_Anio", 
+        "Ejercicio": "Periodo_Anio", "Tipo_declaracion": "Tipo_Declaracion", 
+        "Num_operacion": "Num_Operacion", "Fecha_presentacion": "Fecha_Presentacion", 
+        "Saldo_original": "Saldo_Original", "Remanente": "Saldo_Disponible",
+        "Saldo_disponible": "Saldo_Disponible"
+    }
+    df_excel = df_excel.rename(columns=col_map_inversa)
+
     columnas_requeridas = ["RFC", "Periodo_Mes", "Periodo_Anio", "Tipo_Declaracion", "Num_Operacion", "Fecha_Presentacion", "Saldo_Original"]
     for col in columnas_requeridas:
         if col not in df_excel.columns:
-            return f"❌ Formato incorrecto. Falta la columna obligatoria: '{col}'. Descarga la plantilla guía.", gr.update(), gr.update(), gr.update()
+            return f"❌ Formato incorrecto. Falta la columna obligatoria: '{col}'. Descarga la plantilla guía actualizada.", gr.update(), gr.update(), gr.update()
 
     rfcs_actuales = obtener_rfcs_unicos(email)
     limite_rfc = 5 if ("basico" in str(plan).lower() or "básico" in str(plan).lower()) else 999999
@@ -160,6 +172,14 @@ def procesar_carga_masiva_excel(email, plan, archivo_excel):
             tipo_dec = str(row["Tipo_Declaracion"]).strip()
             fecha_pres = str(row["Fecha_Presentacion"]).split()[0]
             saldo_orig = float(row["Saldo_Original"])
+            
+            # Leer la columna Remanente / Saldo_Disponible si existe, de lo contrario toma el saldo original
+            if "Saldo_Disponible" in df_excel.columns and pd.notna(row["Saldo_Disponible"]):
+                saldo_disp = float(row["Saldo_Disponible"])
+            else:
+                saldo_disp = saldo_orig
+
+            estatus_inicial = "Agotado" if saldo_disp <= 0 else "Vigente"
 
             if not rfc_limpio or rfc_limpio == "NAN" or not num_op_limpio or num_op_limpio == "NAN":
                 registros_omitidos += 1
@@ -178,7 +198,7 @@ def procesar_carga_masiva_excel(email, plan, archivo_excel):
                 "usuario_email": email, "rfc": rfc_limpio, "periodo_mes": mes,
                 "periodo_anio": anio, "tipo_declaracion": tipo_dec, "num_operacion": num_op_limpio,
                 "fecha_presentacion": fecha_pres, "saldo_original": saldo_orig,
-                "saldo_disponible": saldo_orig, "estatus": "Vigente"
+                "saldo_disponible": saldo_disp, "estatus": estatus_inicial
             }).execute()
 
             registros_creados += 1
@@ -771,10 +791,10 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
 
                 gr.Markdown("---")
                 gr.Markdown("### 2. Carga Masiva para Despachos (vía Excel)")
-                gr.Markdown("Si manejas múltiples clientes o quieres importar tu papel de trabajo histórico, descarga la plantilla de Excel, copia tus datos e impórtala de golpe.")
+                gr.Markdown("Descarga la nueva plantilla guía (con las columnas **Ejercicio** y **Remanente**), registra tus saldos parciales o completos e impórtalos de golpe.")
                 
                 with gr.Row():
-                    file_plantilla_descarga = gr.File(label="📥 Descargar Plantilla Guía en Excel", value=PLANTILLA_EXCEL_PATH, interactive=False)
+                    file_plantilla_descarga = gr.File(label="📥 Descargar Plantilla Guía Actualizada en Excel", value=PLANTILLA_EXCEL_PATH, interactive=False)
                     file_excel_masivo = gr.File(label="📤 Cargar Plantilla Excel de Declaraciones", file_types=[".xlsx", ".xls"])
                 
                 btn_procesar_masivo = gr.Button("🚀 Importar Declaraciones Masivas a la Bóveda", variant="primary")
