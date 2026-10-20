@@ -139,10 +139,7 @@ def procesar_carga_masiva_excel(email, plan, archivo_excel):
     except Exception as e:
         return f"❌ Error al leer el archivo Excel: {str(e)}", gr.update(), gr.update(), gr.update()
 
-    # Normalizar nombres de columnas por si el usuario usa minúsculas o variaciones
     df_excel.columns = [str(c).strip().capitalize() for c in df_excel.columns]
-
-    # Mapeo de columnas requeridas permitiendo variantes comunes
     col_map_inversa = {
         "Rfc": "RFC", "Periodo_mes": "Periodo_Mes", "Periodo_anio": "Periodo_Anio", 
         "Ejercicio": "Periodo_Anio", "Tipo_declaracion": "Tipo_Declaracion", 
@@ -173,7 +170,6 @@ def procesar_carga_masiva_excel(email, plan, archivo_excel):
             fecha_pres = str(row["Fecha_Presentacion"]).split()[0]
             saldo_orig = float(row["Saldo_Original"])
             
-            # Leer la columna Remanente / Saldo_Disponible si existe, de lo contrario toma el saldo original
             if "Saldo_Disponible" in df_excel.columns and pd.notna(row["Saldo_Disponible"]):
                 saldo_disp = float(row["Saldo_Disponible"])
             else:
@@ -321,7 +317,6 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
         [Paragraph("Concepto / Evento", style_th), Paragraph("Folio / Referencia SAT", style_th), Paragraph("Saldo Orig.", style_th), Paragraph("Monto Aplicado", style_th), Paragraph("Remanente Saldo", style_th)]
     ]
 
-    # Renglón 1: Declaración Origen Inicial
     fifo_table_data.append([
         Paragraph(f"<b>Declaración Origen ({periodo_origen_str})</b>", style_body),
         Paragraph(num_op_origen, style_body),
@@ -330,7 +325,6 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
         Paragraph(f"${monto_orig:,.2f}", style_body)
     ])
 
-    # Buscar Acreditamientos Previos en el Historial de Supabase (con folio en blanco)
     remanente_corredor = monto_orig
     total_acreditado_prev = 0
 
@@ -346,7 +340,7 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
                     
                     fifo_table_data.append([
                         Paragraph(f"(-) Acreditamiento aplicado en <b>{dest_str}</b>", style_body),
-                        Paragraph("", style_body),  # <- Folio en blanco intencionalmente
+                        Paragraph("", style_body),
                         Paragraph(f"${monto_orig:,.2f}", style_body),
                         Paragraph(f"<font color='#dc2626'>-${monto_apl:,.2f}</font>", style_body),
                         Paragraph(f"${remanente_corredor:,.2f}", style_body)
@@ -354,19 +348,17 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
     except Exception:
         pass
 
-    # Si no se hallaron registros individuales pero hay diferencia previa
     if total_acreditado_prev == 0 and (monto_orig - monto_disp) > 0:
         dif_prev = monto_orig - monto_disp
         remanente_corredor = monto_disp
         fifo_table_data.append([
             Paragraph("(-) Acreditamientos previos acumulados", style_body),
-            Paragraph("", style_body),  # <- Folio en blanco intencionalmente
+            Paragraph("", style_body),
             Paragraph(f"${monto_orig:,.2f}", style_body),
             Paragraph(f"<font color='#dc2626'>-${dif_prev:,.2f}</font>", style_body),
             Paragraph(f"${remanente_corredor:,.2f}", style_body)
         ])
 
-    # Renglón Final: Bloqueo FED
     fifo_table_data.append([
         Paragraph("<b>🔒 SOLICITUD FED / BLOQUEO EN BÓVEDA</b>", style_body),
         Paragraph(str(datos_saldo.get('Folio_FED', 'TRÁMITE FED')), style_body),
@@ -402,7 +394,6 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
     story.append(log_text)
     story.append(Spacer(1, 20))
 
-    # FIRMA ÚNICA (REPRESENTANTE LEGAL / CONTRIBUYENTE)
     firmas_data = [
         [
             Paragraph("__________________________________________<br/><b>Representante Legal / Contribuyente</b><br/>Firma de Conformidad", ParagraphStyle('F1', parent=style_body, alignment=1))
@@ -642,23 +633,24 @@ def guardar_declaracion_pdf(email, plan, rfc, mes, anio, tipo_dec, num_op, fecha
         return f"Error al registrar: {e}", gr.update(), gr.update(), gr.update()
 
 def ejecutar_fifo(email, rfc, monto, mes_dest, anio_dest):
-    if not rfc: return "❌ Selecciona un RFC.", pd.DataFrame()
-    if monto <= 0: return "❌ Ingresa un monto mayor a cero.", pd.DataFrame()
+    if not rfc: return "❌ Selecciona un RFC.", pd.DataFrame(), ""
+    if monto <= 0: return "❌ Ingresa un monto mayor a cero.", pd.DataFrame(), ""
     
     df_saldos = cargar_saldos(email)
     df_vigentes = df_saldos[(df_saldos["RFC"] == rfc) & (df_saldos["Estatus"] == "Vigente")].copy()
     if df_vigentes.empty:
-        return "❌ No hay saldos vigentes disponibles para este cliente.", pd.DataFrame()
+        return "❌ No hay saldos vigentes disponibles para este cliente.", pd.DataFrame(), ""
     
     df_vigentes["Mes_Num"] = df_vigentes["Periodo_Mes"].apply(mes_a_numero)
     df_vigentes = df_vigentes.sort_values(by=["Periodo_Anio", "Mes_Num"]).drop(columns=["Mes_Num"])
     
     if monto > df_vigentes["Saldo_Disponible"].sum():
-        return "❌ El monto excede el saldo total disponible.", pd.DataFrame()
+        return "❌ El monto excede el saldo total disponible.", pd.DataFrame(), ""
     
     remanente_por_aplicar = int(monto)
     periodo_destino_str = f"{mes_dest} {anio_dest}"
     desglose_sat = []
+    datos_sat_lista = []
 
     try:
         for idx, row in df_vigentes.iterrows():
@@ -669,6 +661,11 @@ def ejecutar_fifo(email, rfc, monto, mes_dest, anio_dest):
             remanente_nuevo = saldo_anterior - usar
             remanente_por_aplicar -= usar
             folio_limpio = str(row['Num_Operacion']).replace(".0", "")
+            tipo_dec = str(row.get("Tipo_Declaracion", "Normal"))
+            fecha_pres = str(row.get("Fecha_Presentacion", ""))
+            ejercicio_origen = int(row.get("Periodo_Anio", anio_dest))
+            periodo_origen = str(row.get("Periodo_Mes", ""))
+            
             nuevo_estatus = "Agotado" if remanente_nuevo == 0 else "Vigente"
             
             supabase.table("saldos_iva").update({
@@ -678,7 +675,7 @@ def ejecutar_fifo(email, rfc, monto, mes_dest, anio_dest):
             
             payload_historial = {
                 "usuario_email": email, "fecha_aplicacion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "rfc": rfc, "periodo_origen": f"{row['Periodo_Mes']} {row['Periodo_Anio']}",
+                "rfc": rfc, "periodo_origen": f"{periodo_origen} {ejercicio_origen}",
                 "num_operacion_origen": folio_limpio, "saldo_anterior": float(saldo_anterior),
                 "monto_aplicado": float(usar), "remanente_nuevo": float(remanente_nuevo),
                 "periodo_destino": periodo_destino_str
@@ -686,14 +683,27 @@ def ejecutar_fifo(email, rfc, monto, mes_dest, anio_dest):
             supabase.table("historial_acreditamientos").insert(payload_historial).execute()
             
             desglose_sat.append({
-                "Declaración Destino": periodo_destino_str, "Periodo Origen": f"{row['Periodo_Mes']} {row['Periodo_Anio']}",
+                "Declaración Destino": periodo_destino_str, "Periodo Origen": f"{periodo_origen} {ejercicio_origen}",
                 "Folio SAT": folio_limpio, "Monto Acreditado": f"${usar:,} MXN", "Remanente": f"${remanente_nuevo:,} MXN"
             })
 
+            # Datos exactos para llenar el formulario del SAT
+            datos_sat_lista.append(
+                f"📌 **DATOS PARA EL SAT (Origen: {periodo_origen} {ejercicio_origen})**:\n"
+                f"- **Ejercicio:** {ejercicio_origen}\n"
+                f"- **Periodo:** {periodo_origen}\n"
+                f"- **Saldo por aplicar:** ${usar:,} MXN\n"
+                f"- **Tipo de declaración:** {tipo_dec}\n"
+                f"- **Número de operación:** {folio_limpio}\n"
+                f"- **Fecha en que se presentó:** {fecha_pres}\n"
+                f"- **Monto del saldo a favor original:** ${saldo_original:,} MXN\n"
+                f"- **Remanente histórico antes de la aplicación:** ${saldo_anterior:,} MXN\n"
+            )
+
         registrar_log(email, "EJECUCION_FIFO", f"RFC: {rfc} | Aplicado en {periodo_destino_str} | Monto: ${monto} MXN")
-        return f"¡Acreditamiento FIFO aplicado con éxito!", pd.DataFrame(desglose_sat)
+        return f"¡Acreditamiento FIFO aplicado con éxito!", pd.DataFrame(desglose_sat), "\n\n".join(datos_sat_lista)
     except Exception as e:
-        return f"Error al ejecutar: {e}", pd.DataFrame()
+        return f"Error al ejecutar: {e}", pd.DataFrame(), ""
 
 def obtener_historial_vista(email, rfc):
     df_hist = cargar_historial(email)
@@ -810,6 +820,12 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
                 
                 btn_ejecutar_fifo = gr.Button("🚀 Ejecutar Acreditamiento FIFO", variant="primary")
                 lbl_fifo_res = gr.Markdown()
+                
+                gr.Markdown("---")
+                gr.Markdown("### 📋 Datos Exactos para Llenar el Formulario del SAT")
+                gr.Markdown("Copia los siguientes datos directamente en los campos del portal del SAT cuando realices el acreditamiento:")
+                txt_datos_sat_guia = gr.Markdown("*Aquí aparecerán los datos detallados tras ejecutar el FIFO*")
+                
                 tabla_fifo_desglose = gr.DataFrame(label="Desglose Acreditamiento")
 
             with gr.TabItem("📜 Historial"):
@@ -872,7 +888,7 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
 
     btn_ejecutar_fifo.click(
         fn=ejecutar_fifo, inputs=[state_email, drop_rfc_fifo, num_monto_fifo, drop_mes_dest, num_anio_dest],
-        outputs=[lbl_fifo_res, tabla_fifo_desglose]
+        outputs=[lbl_fifo_res, tabla_fifo_desglose, txt_datos_sat_guia]
     )
 
     btn_ver_hist.click(
