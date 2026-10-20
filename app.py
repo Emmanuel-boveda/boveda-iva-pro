@@ -343,9 +343,32 @@ def eliminar_registro_boveda(email, id_saldo, rfc_actual):
         registrar_log(email, "ELIMINAR_SALDO_BOVEDA", f"Eliminado registro ID: {id_saldo}")
         msg = f"🗑️ El registro con ID {id_saldo} fue eliminado exitosamente de la bóveda."
         res_act = actualizar_vista_resumen(email, rfc_actual)
-        return msg, res_act[0], res_act[1], res_act[2], res_act[3], res_act[4]
+        return msg, res_act[0], res_act[1], res_act[2], res_act[3], res_act[4], res_act[5]
     except Exception as e:
         return f"Error al eliminar registro: {e}", *actualizar_vista_resumen(email, rfc_actual)[0:5]
+
+def eliminar_cliente_completo(email, rfc_a_borrar):
+    if not rfc_a_borrar:
+        return "❌ Por favor selecciona un RFC de cliente válido para eliminar.", gr.update(choices=[], value=None), gr.update(choices=[], value=None), gr.update(choices=[], value=None), "### Selecciona o registra un cliente.", pd.DataFrame(), None, gr.update(choices=[], value=None), gr.update(choices=[], value=None)
+    try:
+        # 1. Eliminar todos los saldos/declaraciones de ese RFC
+        supabase.table("saldos_iva").delete().eq("usuario_email", email).eq("rfc", rfc_a_borrar).execute()
+        # 2. Eliminar su historial de acreditamientos asociado a ese RFC
+        supabase.table("historial_acreditamientos").delete().eq("usuario_email", email).eq("rfc", rfc_a_borrar).execute()
+        
+        registrar_log(email, "ELIMINAR_CLIENTE_COMPLETO", f"Cliente RFC {rfc_a_borrar} eliminado totalmente.")
+        
+        nuevos_rfcs = obtener_rfcs_unicos(email)
+        val_ini = nuevos_rfcs[0] if nuevos_rfcs else None
+        
+        msg = f"🗑️ El cliente con RFC **{rfc_a_borrar}** y todos sus registros asociados fueron eliminados permanentemente."
+        
+        upd_res = gr.update(choices=nuevos_rfcs, value=val_ini)
+        res_act = actualizar_vista_resumen(email, val_ini)
+        
+        return msg, upd_res, upd_res, upd_res, res_act[0], res_act[1], res_act[2], res_act[3], res_act[4]
+    except Exception as e:
+        return f"Error al eliminar cliente: {e}", gr.update(), gr.update(), gr.update(), "### Error", pd.DataFrame(), None, gr.update(), gr.update()
 
 def eliminar_registro_historial(email, id_historial, rfc_hist):
     if not id_historial:
@@ -625,8 +648,13 @@ def login_usuario(email, password):
             
             tipo_plan = user_data.get("plan", "Plan Básico")
             
-            # LECTURA DIRECTA DE LA COLUMNA fecha_expiración DE SUPABASE
-            fecha_exp_val = user_data.get("fecha_expiración")
+            # LECTURA ROBUSTA CONSIDERANDO LA COLUMNA CON Y SIN ACENTO EN SUPABASE
+            fecha_exp_val = (
+                user_data.get("fecha_expiración") or 
+                user_data.get("fecha_expiración") or 
+                user_data.get("fecha_vencimiento") or 
+                user_data.get("expiración")
+            )
             
             if fecha_exp_val and str(fecha_exp_val).strip() not in ["None", "null", ""]:
                 fecha_exp_str = str(fecha_exp_val).split()[0]
@@ -671,18 +699,18 @@ def inicializar_panel_usuario(email):
     html_pagos_interno = generar_html_tabla_planes("")
 
     upd = gr.update(choices=rfcs, value=val_inicial)
-    return upd, upd, upd, html_pagos_interno
+    return upd, upd, upd, upd, html_pagos_interno
 
 def actualizar_vista_resumen(email, rfc):
     if not rfc:
-        return "### Selecciona o registra un cliente.", pd.DataFrame(), gr.update(choices=[], value=None), None, gr.update(choices=[], value=None), gr.update(choices=[], value=None)
+        return "### Selecciona o registra un cliente.", pd.DataFrame(), gr.update(choices=[], value=None), None, gr.update(choices=[], value=None), gr.update(choices=[], value=None), gr.update(choices=[], value=None)
     df = cargar_saldos(email)
     if df.empty:
-        return "### No hay datos registrados.", pd.DataFrame(), gr.update(choices=[], value=None), None, gr.update(choices=[], value=None), gr.update(choices=[], value=None)
+        return "### No hay datos registrados.", pd.DataFrame(), gr.update(choices=[], value=None), None, gr.update(choices=[], value=None), gr.update(choices=[], value=None), gr.update(choices=[], value=None)
     
     df_cliente = df[df["RFC"] == rfc].copy()
     if df_cliente.empty:
-        return f"### Sin registros para {rfc}", pd.DataFrame(), gr.update(choices=[], value=None), None, gr.update(choices=[], value=None), gr.update(choices=[], value=None)
+        return f"### Sin registros para {rfc}", pd.DataFrame(), gr.update(choices=[], value=None), None, gr.update(choices=[], value=None), gr.update(choices=[], value=None), gr.update(choices=[], value=None)
     
     df_cliente["Mes_Num"] = df_cliente["Periodo_Mes"].apply(mes_a_numero)
     df_cliente = df_cliente.sort_values(by=["Periodo_Anio", "Mes_Num"]).drop(columns=["Mes_Num"])
@@ -699,7 +727,7 @@ def actualizar_vista_resumen(email, rfc):
     upd_fed = gr.update(choices=ids_fed, value=ids_fed[0] if ids_fed else None)
     upd_ids_del = gr.update(choices=ids_lista, value=ids_lista[0] if ids_lista else None)
     
-    return metric_html, df_cliente, upd_ids, ruta_excel, upd_fed, upd_ids_del
+    return metric_html, df_cliente, upd_ids, ruta_excel, upd_fed, upd_ids_del, gr.update(value=rfc)
 
 def procesar_solicitud_fed(email, id_saldo, folio_fed, fecha_ingreso, obs, logo_file):
     if not id_saldo:
@@ -911,7 +939,15 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
                     file_descargar_resumen = gr.File(label="📥 Descargar Resumen en Excel", interactive=False)
 
                 gr.Markdown("---")
-                gr.Markdown("### 🗑️ Gestión de Registros (Bóveda)")
+                gr.Markdown("### 🗑️ Gestión / Eliminar Cliente Completo")
+                gr.Markdown("Selecciona el RFC del cliente que deseas eliminar por completo de la bóveda (se borrarán todas sus declaraciones e historial).")
+                with gr.Row():
+                    drop_rfc_eliminar_cliente = gr.Dropdown(label="Seleccionar RFC de Cliente a Eliminar", choices=[], interactive=True)
+                    btn_eliminar_cliente = gr.Button("🗑️ Eliminar Cliente Completo", variant="stop")
+                lbl_eliminar_cliente_res = gr.Markdown()
+
+                gr.Markdown("---")
+                gr.Markdown("### 🗑️ Gestión de Registros Individuales (Bóveda)")
                 with gr.Row():
                     drop_id_eliminar_boveda = gr.Dropdown(label="Seleccionar ID de Declaración a Eliminar", choices=[])
                     btn_eliminar_boveda = gr.Button("🗑️ Eliminar Registro Seleccionado", variant="stop")
@@ -1013,7 +1049,7 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
         outputs=[lbl_msg, panel_login, panel_app, html_header, state_email, state_plan]
     ).then(
         fn=inicializar_panel_usuario, inputs=[state_email],
-        outputs=[drop_rfc_resumen, drop_rfc_fifo, drop_rfc_hist, html_vista_pagos_interno]
+        outputs=[drop_rfc_resumen, drop_rfc_fifo, drop_rfc_hist, drop_rfc_eliminar_cliente, html_vista_pagos_interno]
     )
 
     txt_referido_input.change(
@@ -1023,17 +1059,22 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
 
     drop_rfc_resumen.change(
         fn=actualizar_vista_resumen, inputs=[state_email, drop_rfc_resumen],
-        outputs=[html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_fed, drop_id_eliminar_boveda]
+        outputs=[html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_fed, drop_id_eliminar_boveda, drop_rfc_eliminar_cliente]
     )
 
     btn_actualizar_resumen.click(
         fn=actualizar_vista_resumen, inputs=[state_email, drop_rfc_resumen],
-        outputs=[html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_fed, drop_id_eliminar_boveda]
+        outputs=[html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_fed, drop_id_eliminar_boveda, drop_rfc_eliminar_cliente]
+    )
+
+    btn_eliminar_cliente.click(
+        fn=eliminar_cliente_completo, inputs=[state_email, drop_rfc_eliminar_cliente],
+        outputs=[lbl_eliminar_cliente_res, drop_rfc_resumen, drop_rfc_fifo, drop_rfc_hist, html_metricas, tabla_saldos_resumen, file_descargar_resumen, drop_id_fed, drop_id_eliminar_boveda]
     )
 
     btn_eliminar_boveda.click(
         fn=eliminar_registro_boveda, inputs=[state_email, drop_id_eliminar_boveda, drop_rfc_resumen],
-        outputs=[lbl_eliminar_boveda_res, html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_fed, drop_id_eliminar_boveda]
+        outputs=[lbl_eliminar_boveda_res, html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_fed, drop_id_eliminar_boveda, drop_rfc_eliminar_cliente]
     )
 
     btn_congelar_fed.click(
@@ -1041,7 +1082,7 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
         outputs=[lbl_fed_res, file_pdf_fed_descarga]
     ).then(
         fn=actualizar_vista_resumen, inputs=[state_email, drop_rfc_resumen],
-        outputs=[html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_fed, drop_id_eliminar_boveda]
+        outputs=[html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_fed, drop_id_eliminar_boveda, drop_rfc_eliminar_cliente]
     )
 
     btn_resolver_fed.click(
@@ -1049,7 +1090,7 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
         outputs=[lbl_resolucion_res]
     ).then(
         fn=actualizar_vista_resumen, inputs=[state_email, drop_rfc_resumen],
-        outputs=[html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_fed, drop_id_eliminar_boveda]
+        outputs=[html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_fed, drop_id_eliminar_boveda, drop_rfc_eliminar_cliente]
     )
 
     file_pdf.change(
@@ -1085,4 +1126,3 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     demo.launch(server_name="0.0.0.0", server_port=port, theme=gr.themes.Soft())
-    
