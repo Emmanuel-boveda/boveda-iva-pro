@@ -61,7 +61,6 @@ def calcular_codigo_invitacion(email_referidor):
     if not email_referidor or "@" not in email_referidor:
         return ""
     parte_usuario = email_referidor.split("@")[0].strip().lower()
-    # Eliminar puntos, guiones, números o símbolos; dejar exclusivamente letras de a-z
     solo_letras = re.sub(r'[^a-z]', '', parte_usuario)
     num_letras = len(solo_letras)
     if num_letras == 0:
@@ -626,8 +625,8 @@ def login_usuario(email, password):
             
             tipo_plan = user_data.get("plan", "Plan Básico")
             
-            # LECTURA DE FECHA DE VENCIMIENTO DE SUPABASE
-            fecha_exp_val = user_data.get("fecha_expiracion") or user_data.get("fecha_vencimiento") or user_data.get("expiracion")
+            # LECTURA DIRECTA DE LA COLUMNA fecha_expiracion DE SUPABASE
+            fecha_exp_val = user_data.get("fecha_expiracion")
             
             if fecha_exp_val and str(fecha_exp_val).strip() not in ["None", "null", ""]:
                 fecha_exp_str = str(fecha_exp_val).split()[0]
