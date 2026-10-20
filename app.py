@@ -1,5 +1,6 @@
 import os
 import re
+import urllib.parse
 from datetime import datetime
 import pandas as pd
 import pypdf
@@ -12,6 +13,9 @@ from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable, Image as RLImage
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+# --- CONFIGURACIÓN DE NÚMERO DE WHATSAPP PARA VENTAS ---
+TELEFONO_WHATSAPP = "527226513054"  # 👈 Reemplaza por tu número de WhatsApp a 10-12 dígitos con lada (ej. 527221234567)
 
 # --- CONFIGURACIÓN DE SUPABASE ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
@@ -129,6 +133,11 @@ def obtener_o_crear_plantilla_excel():
 
 PLANTILLA_EXCEL_PATH = obtener_o_crear_plantilla_excel()
 
+def generar_link_whatsapp(plan_nombre, email):
+    msg = f"Hola, deseo adquirir/renovar el {plan_nombre} para Bóveda IVA Pro. Mi correo registrado es: {email}."
+    msg_enc = urllib.parse.quote(msg)
+    return f"https://wa.me/{TELEFONO_WHATSAPP}?text={msg_enc}"
+
 def procesar_carga_masiva_excel(email, plan, archivo_excel):
     if archivo_excel is None:
         return "❌ Por favor sube un archivo Excel válido.", gr.update(), gr.update(), gr.update()
@@ -185,10 +194,11 @@ def procesar_carga_masiva_excel(email, plan, archivo_excel):
                 registros_omitidos += 1
                 continue
 
-            check_dup = supabase.table("saldos_iva").select("id").eq("usuario_email", email).eq("num_operacion", num_op_limpio).execute()
-            if check_dup.data:
-                registros_omitidos += 1
-                continue
+            # Sustitución automática si ya existe el mismo periodo/ejercicio/RFC
+            check_existente = supabase.table("saldos_iva").select("id").eq("usuario_email", email).eq("rfc", rfc_limpio).eq("periodo_mes", mes).eq("periodo_anio", anio).execute()
+            if check_existente.data:
+                for reg_ext in check_existente.data:
+                    supabase.table("saldos_iva").delete().eq("id", reg_ext["id"]).execute()
 
             supabase.table("saldos_iva").insert({
                 "usuario_email": email, "rfc": rfc_limpio, "periodo_mes": mes,
@@ -209,11 +219,65 @@ def procesar_carga_masiva_excel(email, plan, archivo_excel):
     val_init = rfcs_actualizados[0] if rfcs_actualizados else None
 
     msg = f"✅ **Carga Masiva Finalizada:** {registros_creados} declaraciones registradas exitosamente."
-    if registros_omitidos > 0:
-        msg += f" (Se omitieron {registros_omitidos} filas por estar duplicadas o incompletas)."
-
     upd = gr.update(choices=rfcs_actualizados, value=val_init)
     return msg, upd, upd, upd
+
+def guardar_declaracion_pdf(email, plan, rfc, mes, anio, tipo_dec, num_op, fecha_pres, saldo_orig, confirma_mod):
+    rfc_limpio = rfc.upper().strip()
+    num_op_limpio = str(num_op).replace(".0", "").strip()
+    
+    if not num_op_limpio:
+        return "❌ El número de operación es obligatorio.", gr.update(), gr.update(), gr.update()
+    
+    try:
+        check_existente = supabase.table("saldos_iva").select("id, tipo_declaracion, num_operacion").eq("usuario_email", email).eq("rfc", rfc_limpio).eq("periodo_mes", mes).eq("periodo_anio", int(anio)).execute()
+        
+        if check_existente.data and not confirma_mod:
+            reg_prev = check_existente.data[0]
+            return f"⚠️ Ya existe una declaración registrada para {mes} {anio} ({reg_prev.get('tipo_declaracion')} - Op: {reg_prev.get('num_operacion')}). Si estás subiendo una Complementaria, marca la casilla 'Sustituir declaración anterior' para actualizarla.", gr.update(), gr.update(), gr.update()
+
+        if check_existente.data and confirma_mod:
+            for reg_prev in check_existente.data:
+                supabase.table("saldos_iva").delete().eq("id", reg_prev["id"]).execute()
+
+        supabase.table("saldos_iva").insert({
+            "usuario_email": email, "rfc": rfc_limpio, "periodo_mes": mes,
+            "periodo_anio": int(anio), "tipo_declaracion": tipo_dec, "num_operacion": num_op_limpio,
+            "fecha_presentacion": str(fecha_pres), "saldo_original": float(saldo_orig),
+            "saldo_disponible": float(saldo_orig), "estatus": "Vigente"
+        }).execute()
+        
+        registrar_log(email, "CARGA_DECLARACION_PDF", f"RFC: {rfc_limpio} | {mes} {anio} | Monto: ${saldo_orig} MXN")
+        rfcs_nuevos = obtener_rfcs_unicos(email)
+        upd = gr.update(choices=rfcs_nuevos, value=rfc_limpio)
+        
+        return "¡Declaración registrada correctamente!", upd, upd, upd
+    except Exception as e:
+        return f"Error al registrar: {e}", gr.update(), gr.update(), gr.update()
+
+def eliminar_registro_boveda(email, id_saldo, rfc_actual):
+    if not id_saldo:
+        return "❌ Selecciona un ID válido para eliminar.", *actualizar_vista_resumen(email, rfc_actual)[0:5]
+    try:
+        supabase.table("saldos_iva").delete().eq("id", int(id_saldo)).eq("usuario_email", email).execute()
+        registrar_log(email, "ELIMINAR_SALDO_BOVEDA", f"Eliminado registro ID: {id_saldo}")
+        msg = f"🗑️ El registro con ID {id_saldo} fue eliminado exitosamente de la bóveda."
+        res_act = actualizar_vista_resumen(email, rfc_actual)
+        return msg, res_act[0], res_act[1], res_act[2], res_act[3], res_act[4]
+    except Exception as e:
+        return f"Error al eliminar registro: {e}", *actualizar_vista_resumen(email, rfc_actual)[0:5]
+
+def eliminar_registro_historial(email, id_historial, rfc_hist):
+    if not id_historial:
+        return "❌ Selecciona un ID de historial válido para eliminar.", pd.DataFrame(), None
+    try:
+        supabase.table("historial_acreditamientos").delete().eq("id", int(id_historial)).eq("usuario_email", email).execute()
+        registrar_log(email, "ELIMINAR_HISTORIAL", f"Eliminado registro historial ID: {id_historial}")
+        msg = f"🗑️ El movimiento de historial ID {id_historial} fue eliminado con éxito."
+        df_h, ruta_ex, _ = obtener_historial_vista(email, rfc_hist)
+        return msg, df_h, ruta_ex
+    except Exception as e:
+        return f"Error al eliminar historial: {e}", *obtener_historial_vista(email, rfc_hist)
 
 def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
     rfc_raw = str(datos_saldo.get("RFC", "N/A"))
@@ -232,7 +296,6 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
     story = []
 
     primary_color = colors.HexColor("#1e3c72")
-    secondary_color = colors.HexColor("#2a5298")
     accent_color = colors.HexColor("#dc2626")
     light_bg = colors.HexColor("#f8fafc")
     dark_text = colors.HexColor("#0f172a")
@@ -244,7 +307,6 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
     style_th = ParagraphStyle('TableHead', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=8, textColor=colors.white, leading=10)
     style_badge = ParagraphStyle('BadgeText', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=8, textColor=colors.white, alignment=1)
 
-    # 1. ENCABEZADO
     header_elements = []
     if logo_path and os.path.exists(logo_path):
         try:
@@ -267,7 +329,6 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
     story.append(Spacer(1, 4))
     story.append(HRFlowable(width="100%", thickness=1.5, color=primary_color, spaceAfter=6))
 
-    # BANNER DE ESTATUS
     banner_text = f"🔒 <b>ESTATUS: SALDO BLOQUEADO EN BÓVEDA POR TRÁMITE FED EN PROCESO</b>" if "TRÁMITE" in str(datos_saldo.get('Estatus')).upper() else f"<b>ESTATUS DEL SALDO: {datos_saldo.get('Estatus')}</b>"
     banner_bg = accent_color if "TRÁMITE" in str(datos_saldo.get('Estatus')).upper() else primary_color
     t_banner = Table([[Paragraph(banner_text, style_badge)]], colWidths=[540])
@@ -283,7 +344,6 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
     monto_orig = float(datos_saldo.get("Saldo_Original", 0))
     monto_disp = float(datos_saldo.get("Saldo_Disponible", 0))
 
-    # DATOS GENERALES
     datos_gen = [
         [Paragraph("<b>RFC Contribuyente:</b>", style_body), Paragraph(str(rfc_raw), style_body), Paragraph("<b>Folio Interno Bóveda:</b>", style_body), Paragraph(f"FED-{id_reg}", style_body)],
         [Paragraph("<b>Periodo / Ejercicio Origen:</b>", style_body), Paragraph(periodo_origen_str, style_body), Paragraph("<b>Fecha de Ingreso SAT:</b>", style_body), Paragraph(str(datos_saldo.get('Fecha_Ingreso_FED', datetime.now().strftime('%Y-%m-%d'))), style_body)],
@@ -300,7 +360,6 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
     story.append(t_datos_gen)
     story.append(Spacer(1, 8))
 
-    # 1. FUNDAMENTACIÓN E INTEGRACIÓN JURÍDICA
     story.append(Paragraph("1. FUNDAMENTACIÓN E INTEGRACIÓN JURÍDICA", style_h2))
     texto_ley = (
         "El presente expediente respalda la solicitud de devolución del saldo a favor de Impuesto al Valor Agregado conforme a los "
@@ -310,7 +369,6 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
     story.append(Paragraph(texto_ley, style_body))
     story.append(Spacer(1, 8))
 
-    # 2. DETERMINACIÓN ARITMÉTICA E HISTORIAL FIFO DE APLICACIONES
     story.append(Paragraph("2. DETERMINACIÓN ARITMÉTICA E HISTORIAL FIFO DE APLICACIONES", style_h2))
     
     fifo_table_data = [
@@ -376,13 +434,12 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
     story.append(t_fifo)
     story.append(Spacer(1, 10))
 
-    # 3. MARCO LEGAL Y DECLARACIÓN BAJO PROTESTA
     story.append(Paragraph("3. DECLARACIÓN BAJO PROTESTA DE DECIR VERDAD Y MARCO LEGAL", style_h2))
     texto_protesta = (
         "Bajo protesta de decir verdad, el contribuyente y/o su representante legal manifiestan que la información y montos aquí asentados "
         "derivan de operaciones contables y fiscales reales, soportadas con Comprobantes Fiscales Digitales por Internet (CFDI) válidos, "
         "efectivamente pagados y bancarizados. Así mismo, se certifica que el saldo solicitado no ha sido objeto de compensación ni acreditamiento duplicado, "
-        "cumpliendo estrictamente con las disposiciones de los artículos 22 y 22-D del Código Fiscal de la Federación (CFF)."
+        "cumpliendo strictly con las disposiciones de los artículos 22 y 22-D del Código Fiscal de la Federación (CFF)."
     )
     story.append(Paragraph(texto_protesta, style_body))
     story.append(Spacer(1, 8))
@@ -503,19 +560,61 @@ def login_usuario(email, password):
 def inicializar_panel_usuario(email):
     rfcs = obtener_rfcs_unicos(email)
     val_inicial = rfcs[0] if rfcs else None
+    
+    link_basico_m = generar_link_whatsapp("Plan Básico Mensual ($49/mes)", email)
+    link_basico_a = generar_link_whatsapp("Plan Básico Anual ($399/año)", email)
+    link_ilimitado_m = generar_link_whatsapp("Plan Ilimitado Mensual ($99/mes)", email)
+    link_ilimitado_a = generar_link_whatsapp("Plan Ilimitado Anual ($999/año)", email)
+
+    html_pagos = f"""
+    <div style="padding: 10px;">
+        <h3 style="color: #1e3c72; text-align: center; margin-bottom: 20px;">Elije el Plan Ideal para tu Despacho o Empresa</h3>
+        <div style="display: flex; gap: 20px; justify-content: center; flex-wrap: wrap;">
+            
+            <!-- PLAN BÁSICO -->
+            <div style="background: #ffffff; border: 2px solid #cbd5e1; border-radius: 12px; padding: 25px; width: 300px; text-align: center; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
+                <h3 style="color: #1e3c72; margin-top: 0;">Plan Básico</h3>
+                <p style="font-size: 0.85rem; color: #64748b;">Para contadores con hasta 5 RFCs de clientes.</p>
+                <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 15px 0;">
+                <p style="font-size: 1.8rem; font-weight: bold; color: #0f172a; margin: 5px 0;">$49 <span style="font-size: 0.9rem; font-weight: normal; color: #64748b;">MXN / mes</span></p>
+                <p style="font-size: 1.1rem; font-weight: bold; color: #16a34a; margin: 5px 0;">o $399 <span style="font-size: 0.8rem; font-weight: normal; color: #64748b;">MXN / año</span></p>
+                <p style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 20px;">Precios con IVA incluido</p>
+                
+                <a href="{link_basico_m}" target="_blank" style="display: block; background: #25d366; color: white; padding: 10px; text-decoration: none; border-radius: 6px; font-weight: bold; margin-bottom: 10px;">💬 Contratar Mensual ($49)</a>
+                <a href="{link_basico_a}" target="_blank" style="display: block; background: #128c7e; color: white; padding: 10px; text-decoration: none; border-radius: 6px; font-weight: bold;">💬 Contratar Anual ($399)</a>
+            </div>
+
+            <!-- PLAN ILIMITADO -->
+            <div style="background: #ffffff; border: 2px solid #2a5298; border-radius: 12px; padding: 25px; width: 300px; text-align: center; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); position: relative;">
+                <div style="position: absolute; top: -12px; right: 20px; background: #2a5298; color: white; padding: 2px 10px; border-radius: 10px; font-size: 0.75rem; font-weight: bold;">MÁS POPULAR</div>
+                <h3 style="color: #2a5298; margin-top: 0;">Plan Ilimitado</h3>
+                <p style="font-size: 0.85rem; color: #64748b;">RFCs e importaciones ilimitadas para despachos grandes.</p>
+                <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 15px 0;">
+                <p style="font-size: 1.8rem; font-weight: bold; color: #0f172a; margin: 5px 0;">$99 <span style="font-size: 0.9rem; font-weight: normal; color: #64748b;">MXN / mes</span></p>
+                <p style="font-size: 1.1rem; font-weight: bold; color: #16a34a; margin: 5px 0;">o $999 <span style="font-size: 0.8rem; font-weight: normal; color: #64748b;">MXN / año</span></p>
+                <p style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 20px;">Precios con IVA incluido</p>
+                
+                <a href="{link_ilimitado_m}" target="_blank" style="display: block; background: #25d366; color: white; padding: 10px; text-decoration: none; border-radius: 6px; font-weight: bold; margin-bottom: 10px;">💬 Contratar Mensual ($99)</a>
+                <a href="{link_ilimitado_a}" target="_blank" style="display: block; background: #128c7e; color: white; padding: 10px; text-decoration: none; border-radius: 6px; font-weight: bold;">💬 Contratar Anual ($999)</a>
+            </div>
+
+        </div>
+    </div>
+    """
+
     upd = gr.update(choices=rfcs, value=val_inicial)
-    return upd, upd, upd
+    return upd, upd, upd, html_pagos
 
 def actualizar_vista_resumen(email, rfc):
     if not rfc:
-        return "### Selecciona o registra un cliente.", pd.DataFrame(), gr.update(choices=[], value=None), None, gr.update(choices=[], value=None)
+        return "### Selecciona o registra un cliente.", pd.DataFrame(), gr.update(choices=[], value=None), None, gr.update(choices=[], value=None), gr.update(choices=[], value=None)
     df = cargar_saldos(email)
     if df.empty:
-        return "### No hay datos registrados.", pd.DataFrame(), gr.update(choices=[], value=None), None, gr.update(choices=[], value=None)
+        return "### No hay datos registrados.", pd.DataFrame(), gr.update(choices=[], value=None), None, gr.update(choices=[], value=None), gr.update(choices=[], value=None)
     
     df_cliente = df[df["RFC"] == rfc].copy()
     if df_cliente.empty:
-        return f"### Sin registros para {rfc}", pd.DataFrame(), gr.update(choices=[], value=None), None, gr.update(choices=[], value=None)
+        return f"### Sin registros para {rfc}", pd.DataFrame(), gr.update(choices=[], value=None), None, gr.update(choices=[], value=None), gr.update(choices=[], value=None)
     
     df_cliente["Mes_Num"] = df_cliente["Periodo_Mes"].apply(mes_a_numero)
     df_cliente = df_cliente.sort_values(by=["Periodo_Anio", "Mes_Num"]).drop(columns=["Mes_Num"])
@@ -530,8 +629,9 @@ def actualizar_vista_resumen(email, rfc):
     
     upd_ids = gr.update(choices=ids_lista, value=ids_lista[0] if ids_lista else None)
     upd_fed = gr.update(choices=ids_fed, value=ids_fed[0] if ids_fed else None)
+    upd_ids_del = gr.update(choices=ids_lista, value=ids_lista[0] if ids_lista else None)
     
-    return metric_html, df_cliente, upd_ids, ruta_excel, upd_fed
+    return metric_html, df_cliente, upd_ids, ruta_excel, upd_fed, upd_ids_del
 
 def procesar_solicitud_fed(email, id_saldo, folio_fed, fecha_ingreso, obs, logo_file):
     if not id_saldo:
@@ -605,33 +705,6 @@ def resolver_tramite_fed(email, id_saldo, accion_resolucion, num_deposito, confi
     except Exception as e:
         return f"Error al resolver trámite FED: {e}"
 
-def guardar_declaracion_pdf(email, plan, rfc, mes, anio, tipo_dec, num_op, fecha_pres, saldo_orig, confirma_mod):
-    rfc_limpio = rfc.upper().strip()
-    num_op_limpio = str(num_op).replace(".0", "").strip()
-    
-    if not num_op_limpio:
-        return "❌ El número de operación es obligatorio.", gr.update(), gr.update(), gr.update()
-    
-    try:
-        check_dup = supabase.table("saldos_iva").select("id").eq("usuario_email", email).eq("num_operacion", num_op_limpio).execute()
-        if check_dup.data:
-            return f"❌ El Número de Operación '{num_op_limpio}' ya está registrado.", gr.update(), gr.update(), gr.update()
-
-        supabase.table("saldos_iva").insert({
-            "usuario_email": email, "rfc": rfc_limpio, "periodo_mes": mes,
-            "periodo_anio": int(anio), "tipo_declaracion": tipo_dec, "num_operacion": num_op_limpio,
-            "fecha_presentacion": str(fecha_pres), "saldo_original": float(saldo_orig),
-            "saldo_disponible": float(saldo_orig), "estatus": "Vigente"
-        }).execute()
-        
-        registrar_log(email, "CARGA_DECLARACION_PDF", f"RFC: {rfc_limpio} | Monto: ${saldo_orig} MXN")
-        rfcs_nuevos = obtener_rfcs_unicos(email)
-        upd = gr.update(choices=rfcs_nuevos, value=rfc_limpio)
-        
-        return "¡Declaración registrada correctamente!", upd, upd, upd
-    except Exception as e:
-        return f"Error al registrar: {e}", gr.update(), gr.update(), gr.update()
-
 def ejecutar_fifo(email, rfc, monto, mes_dest, anio_dest):
     if not rfc: return "❌ Selecciona un RFC.", pd.DataFrame(), ""
     if monto <= 0: return "❌ Ingresa un monto mayor a cero.", pd.DataFrame(), ""
@@ -687,7 +760,6 @@ def ejecutar_fifo(email, rfc, monto, mes_dest, anio_dest):
                 "Folio SAT": folio_limpio, "Monto Acreditado": f"${usar:,} MXN", "Remanente": f"${remanente_nuevo:,} MXN"
             })
 
-            # Datos exactos para llenar el formulario del SAT
             datos_sat_lista.append(
                 f"📌 **DATOS PARA EL SAT (Origen: {periodo_origen} {ejercicio_origen})**:\n"
                 f"- **Ejercicio:** {ejercicio_origen}\n"
@@ -707,16 +779,18 @@ def ejecutar_fifo(email, rfc, monto, mes_dest, anio_dest):
 
 def obtener_historial_vista(email, rfc):
     df_hist = cargar_historial(email)
-    if df_hist.empty: return pd.DataFrame(), None
+    if df_hist.empty: return pd.DataFrame(), None, gr.update(choices=[], value=None)
     df_cliente = df_hist[df_hist["RFC"] == rfc] if rfc else df_hist
-    if df_cliente.empty: return pd.DataFrame(), None
+    if df_cliente.empty: return pd.DataFrame(), None, gr.update(choices=[], value=None)
     
     cols = [c for c in ["ID", "Fecha_Aplicacion", "RFC", "Periodo_Origen", "Declaracion_Aplicada_Destino", "Num_Operacion_Origen", "Saldo_Anterior", "Monto_Aplicado", "Remanente_Nuevo"] if c in df_cliente.columns]
     df_disp = df_cliente[cols]
     ruta_excel_hist = exportar_dataframe_excel(df_disp, f"Historial_Acreditamientos_{rfc if rfc else 'General'}")
-    return df_disp, ruta_excel_hist
+    ids_hist = df_disp["ID"].tolist()
+    upd_ids_h = gr.update(choices=ids_hist, value=ids_hist[0] if ids_hist else None)
+    return df_disp, ruta_excel_hist, upd_ids_h
 
-# --- INTERFAZ GRADIO (Configuración compatible con 6.0) ---
+# --- INTERFAZ GRADIO ---
 with gr.Blocks(title="Bóveda IVA Pro") as demo:
     
     state_email = gr.State("")
@@ -754,6 +828,13 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
                 
                 with gr.Row():
                     file_descargar_resumen = gr.File(label="📥 Descargar Resumen en Excel", interactive=False)
+
+                gr.Markdown("---")
+                gr.Markdown("### 🗑️ Gestión de Registros (Bóveda)")
+                with gr.Row():
+                    drop_id_eliminar_boveda = gr.Dropdown(label="Seleccionar ID de Declaración a Eliminar", choices=[])
+                    btn_eliminar_boveda = gr.Button("🗑️ Eliminar Registro Seleccionado", variant="stop")
+                lbl_eliminar_boveda_res = gr.Markdown()
 
                 gr.Markdown("---")
                 gr.Markdown("### 🏛️ Módulo FED (Formato Electrónico de Devoluciones) — Devolución de IVA")
@@ -794,17 +875,17 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
                     date_pres_pdf = gr.Textbox(label="Fecha Presentación (YYYY-MM-DD)", value=datetime.now().strftime("%Y-%m-%d"))
                 with gr.Row():
                     num_saldo_pdf = gr.Number(label="Saldo a Favor ($)", value=0)
-                    chk_mod_pdf = gr.Checkbox(label="Sustituir declaración anterior")
+                    chk_mod_pdf = gr.Checkbox(label="Sustituir declaración anterior (si ya existe una para el mismo mes/ejercicio)")
                 
                 btn_guardar_pdf = gr.Button("💾 Registrar Declaración Individual", variant="primary")
                 lbl_guardar_pdf_res = gr.Markdown()
 
                 gr.Markdown("---")
                 gr.Markdown("### 2. Carga Masiva para Despachos (vía Excel)")
-                gr.Markdown("Descarga la nueva plantilla guía (con las columnas **Ejercicio** y **Remanente**), registra tus saldos parciales o completos e impórtalos de golpe.")
+                gr.Markdown("Descarga la plantilla guía. Si subes un periodo que ya existe, el sistema lo detectará y actualizará automáticamente.")
                 
                 with gr.Row():
-                    file_plantilla_descarga = gr.File(label="📥 Descargar Plantilla Guía Actualizada en Excel", value=PLANTILLA_EXCEL_PATH, interactive=False)
+                    file_plantilla_descarga = gr.File(label="📥 Descargar Plantilla Guía en Excel", value=PLANTILLA_EXCEL_PATH, interactive=False)
                     file_excel_masivo = gr.File(label="📤 Cargar Plantilla Excel de Declaraciones", file_types=[".xlsx", ".xls"])
                 
                 btn_procesar_masivo = gr.Button("🚀 Importar Declaraciones Masivas a la Bóveda", variant="primary")
@@ -823,7 +904,6 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
                 
                 gr.Markdown("---")
                 gr.Markdown("### 📋 Datos Exactos para Llenar el Formulario del SAT")
-                gr.Markdown("Copia los siguientes datos directamente en los campos del portal del SAT cuando realices el acreditamiento:")
                 txt_datos_sat_guia = gr.Markdown("*Aquí aparecerán los datos detallados tras ejecutar el FIFO*")
                 
                 tabla_fifo_desglose = gr.DataFrame(label="Desglose Acreditamiento")
@@ -836,23 +916,38 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
                 tabla_historial = gr.DataFrame(label="Historial de Acreditamientos")
                 file_descargar_historial = gr.File(label="📥 Descargar Historial en Excel", interactive=False)
 
+                gr.Markdown("---")
+                gr.Markdown("### 🗑️ Gestión de Historial (Eliminar Acreditamiento)")
+                with gr.Row():
+                    drop_id_eliminar_hist = gr.Dropdown(label="Seleccionar ID de Historial a Eliminar", choices=[])
+                    btn_eliminar_hist = gr.Button("🗑️ Eliminar Movimiento de Historial", variant="stop")
+                lbl_eliminar_hist_res = gr.Markdown()
+
+            with gr.TabItem("💳 Planes y Suscripciones"):
+                html_vista_pagos = gr.HTML()
+
     # --- EVENTOS Y VÍNCULOS ---
     btn_ingresar.click(
         fn=login_usuario, inputs=[txt_user, txt_pass],
         outputs=[lbl_msg, panel_login, panel_app, html_header, state_email, state_plan]
     ).then(
         fn=inicializar_panel_usuario, inputs=[state_email],
-        outputs=[drop_rfc_resumen, drop_rfc_fifo, drop_rfc_hist]
+        outputs=[drop_rfc_resumen, drop_rfc_fifo, drop_rfc_hist, html_vista_pagos]
     )
 
     drop_rfc_resumen.change(
         fn=actualizar_vista_resumen, inputs=[state_email, drop_rfc_resumen],
-        outputs=[html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_fed]
+        outputs=[html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_fed, drop_id_eliminar_boveda]
     )
 
     btn_actualizar_resumen.click(
         fn=actualizar_vista_resumen, inputs=[state_email, drop_rfc_resumen],
-        outputs=[html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_fed]
+        outputs=[html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_fed, drop_id_eliminar_boveda]
+    )
+
+    btn_eliminar_boveda.click(
+        fn=eliminar_registro_boveda, inputs=[state_email, drop_id_eliminar_boveda, drop_rfc_resumen],
+        outputs=[lbl_eliminar_boveda_res, html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_fed, drop_id_eliminar_boveda]
     )
 
     btn_congelar_fed.click(
@@ -860,7 +955,7 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
         outputs=[lbl_fed_res, file_pdf_fed_descarga]
     ).then(
         fn=actualizar_vista_resumen, inputs=[state_email, drop_rfc_resumen],
-        outputs=[html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_fed]
+        outputs=[html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_fed, drop_id_eliminar_boveda]
     )
 
     btn_resolver_fed.click(
@@ -868,7 +963,7 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
         outputs=[lbl_resolucion_res]
     ).then(
         fn=actualizar_vista_resumen, inputs=[state_email, drop_rfc_resumen],
-        outputs=[html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_fed]
+        outputs=[html_metricas, tabla_saldos_resumen, drop_id_fed, file_descargar_resumen, drop_id_fed, drop_id_eliminar_boveda]
     )
 
     file_pdf.change(
@@ -893,7 +988,12 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
 
     btn_ver_hist.click(
         fn=obtener_historial_vista, inputs=[state_email, drop_rfc_hist],
-        outputs=[tabla_historial, file_descargar_historial]
+        outputs=[tabla_historial, file_descargar_historial, drop_id_eliminar_hist]
+    )
+
+    btn_eliminar_hist.click(
+        fn=eliminar_registro_historial, inputs=[state_email, drop_id_eliminar_hist, drop_rfc_hist],
+        outputs=[lbl_eliminar_hist_res, tabla_historial, file_descargar_historial, drop_id_eliminar_hist]
     )
 
 if __name__ == "__main__":
