@@ -625,8 +625,8 @@ def login_usuario(email, password):
             
             tipo_plan = user_data.get("plan", "Plan Básico")
             
-            # LECTURA DIRECTA DE LA COLUMNA fecha_expiracion DE SUPABASE
-            fecha_exp_val = user_data.get("fecha_expiracion")
+            # LECTURA DIRECTA DE LA COLUMNA fecha_expiración DE SUPABASE
+            fecha_exp_val = user_data.get("fecha_expiración")
             
             if fecha_exp_val and str(fecha_exp_val).strip() not in ["None", "null", ""]:
                 fecha_exp_str = str(fecha_exp_val).split()[0]
