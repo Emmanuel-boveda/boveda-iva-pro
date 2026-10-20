@@ -52,6 +52,22 @@ def mes_a_numero(mes_str):
     }
     return meses_dict.get(str(mes_str).capitalize(), 1)
 
+def calcular_codigo_invitacion(email_referidor):
+    """
+    Genera el código considerando ÚNICAMENTE letras antes del @.
+    Ejemplo: ema.ensastegui@gmail.com -> emaensastegui (13 letras) -> emaensastegui13
+    Ejemplo: contador@gmail.com -> contador (8 letras) -> contador08
+    """
+    if not email_referidor or "@" not in email_referidor:
+        return ""
+    parte_usuario = email_referidor.split("@")[0].strip().lower()
+    # Eliminar puntos, guiones, números o símbolos; dejar exclusivamente letras de a-z
+    solo_letras = re.sub(r'[^a-z]', '', parte_usuario)
+    num_letras = len(solo_letras)
+    if num_letras == 0:
+        return "ref00"
+    return f"{solo_letras}{num_letras:02d}"
+
 def cargar_saldos(email):
     try:
         if not supabase:
@@ -609,11 +625,37 @@ def login_usuario(email, password):
                 return "❌ Suscripción suspendida.", gr.update(visible=True), gr.update(visible=False), "", "", ""
             
             tipo_plan = user_data.get("plan", "Plan Básico")
-            fecha_exp_str = str(user_data.get("fecha_expiracion", "Indefinida"))
-            if not fecha_exp_str or fecha_exp_str == "None":
+            
+            # LECTURA DE FECHA DE VENCIMIENTO DE SUPABASE
+            fecha_exp_val = user_data.get("fecha_expiracion") or user_data.get("fecha_vencimiento") or user_data.get("expiracion")
+            
+            if fecha_exp_val and str(fecha_exp_val).strip() not in ["None", "null", ""]:
+                fecha_exp_str = str(fecha_exp_val).split()[0]
+            else:
                 fecha_exp_str = "Indefinida"
             
-            header_html = f'<div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); padding: 18px; border-radius: 10px; color: white; margin-bottom: 15px;"><h2 style="margin:0; font-size: 1.8rem;">🏛️ Bóveda IVA Pro</h2><p style="margin:5px 0 0 0; color: #e0e7ff;">Bienvenido, <b>{email}</b> | Plan: <b>{tipo_plan}</b> | Vence: <b>{fecha_exp_str}</b></p></div>'
+            # Cálculo del código de referido exclusivo del usuario autenticado
+            codigo_usuario = calcular_codigo_invitacion(email)
+            
+            # Encabezado con color Verde Menta (#8BC4B9) solicitado
+            header_html = f'''
+            <div style="background: linear-gradient(135deg, #8BC4B9 0%, #6BA89B 100%); padding: 18px 22px; border-radius: 10px; color: #0f172a; margin-bottom: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                    <div>
+                        <h2 style="margin:0; font-size: 1.8rem; font-weight: bold; color: #0f172a;">🏛️ Bóveda IVA Pro</h2>
+                        <p style="margin:5px 0 0 0; color: #1e293b; font-size: 0.95rem;">
+                            Bienvenido, <b>{email}</b> &nbsp;|&nbsp; 
+                            Plan: <b>{tipo_plan}</b> &nbsp;|&nbsp; 
+                            Vence: <b style="color: #065f46;">{fecha_exp_str}</b>
+                        </p>
+                    </div>
+                    <div style="background: rgba(255, 255, 255, 0.4); padding: 8px 16px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.6); text-align: right;">
+                        <span style="font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; color: #1e293b; display: block; font-weight: 600;">Mi Código de Referido:</span>
+                        <span style="font-size: 1.3rem; font-weight: bold; color: #0f172a; font-family: monospace;">{codigo_usuario}</span>
+                    </div>
+                </div>
+            </div>
+            '''
 
             return (
                 "¡Acceso concedido!", gr.update(visible=False), gr.update(visible=True),
@@ -925,7 +967,7 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
                 gr.Markdown("Descarga la plantilla guía. Si subes un periodo que ya existe, el sistema lo detectará y actualizará automáticamente.")
                 
                 with gr.Row():
-                    file_plantilla_descarga = gr.File(label="📥 Descargar Plantilla Guía in Excel", value=PLANTILLA_EXCEL_PATH, interactive=False)
+                    file_plantilla_descarga = gr.File(label="📥 Descargar Plantilla Guía en Excel", value=PLANTILLA_EXCEL_PATH, interactive=False)
                     file_excel_masivo = gr.File(label="📤 Cargar Plantilla Excel de Declaraciones", file_types=[".xlsx", ".xls"])
                 
                 btn_procesar_masivo = gr.Button("🚀 Importar Declaraciones Masivas a la Bóveda", variant="primary")
