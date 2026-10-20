@@ -15,7 +15,7 @@ from reportlab.platypus import (
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 # --- CONFIGURACIÓN DE NÚMERO DE WHATSAPP PARA VENTAS ---
-TELEFONO_WHATSAPP = "527226513054"  # 👈 Reemplaza por tu número de WhatsApp a 10-12 dígitos con lada (ej. 527221234567)
+TELEFONO_WHATSAPP = "527226513054"  # Tu número configurado
 
 # --- CONFIGURACIÓN DE SUPABASE ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
@@ -133,10 +133,54 @@ def obtener_o_crear_plantilla_excel():
 
 PLANTILLA_EXCEL_PATH = obtener_o_crear_plantilla_excel()
 
-def generar_link_whatsapp(plan_nombre, email):
-    msg = f"Hola, deseo adquirir/renovar el {plan_nombre} para Bóveda IVA Pro. Mi correo registrado es: {email}."
-    msg_enc = urllib.parse.quote(msg)
-    return f"https://wa.me/{TELEFONO_WHATSAPP}?text={msg_enc}"
+def generar_html_tabla_planes(email_usuario=""):
+    email_ref = email_usuario if email_usuario else "Nuevo Cliente"
+    
+    msg_bm = urllib.parse.quote(f"Hola, deseo contratar el Plan Básico Mensual ($49 MXN) de Bóveda IVA Pro. Mi correo es: {email_ref}")
+    msg_ba = urllib.parse.quote(f"Hola, deseo contratar el Plan Básico Anual ($399 MXN) de Bóveda IVA Pro. Mi correo es: {email_ref}")
+    msg_im = urllib.parse.quote(f"Hola, deseo contratar el Plan Ilimitado Mensual ($99 MXN) de Bóveda IVA Pro. Mi correo es: {email_ref}")
+    msg_ia = urllib.parse.quote(f"Hola, deseo contratar el Plan Ilimitado Anual ($999 MXN) de Bóveda IVA Pro. Mi correo es: {email_ref}")
+
+    link_bm = f"https://wa.me/{TELEFONO_WHATSAPP}?text={msg_bm}"
+    link_ba = f"https://wa.me/{TELEFONO_WHATSAPP}?text={msg_ba}"
+    link_im = f"https://wa.me/{TELEFONO_WHATSAPP}?text={msg_im}"
+    link_ia = f"https://wa.me/{TELEFONO_WHATSAPP}?text={msg_ia}"
+
+    return f"""
+    <div style="max-width: 900px; margin: 30px auto; padding: 10px;">
+        <h3 style="color: #1e3c72; text-align: center; margin-bottom: 25px; font-size: 1.5rem;">💳 Planes y Suscripciones — Bóveda IVA Pro</h3>
+        <div style="display: flex; gap: 20px; justify-content: center; flex-wrap: wrap;">
+            
+            <!-- PLAN BÁSICO -->
+            <div style="background: #ffffff; border: 2px solid #cbd5e1; border-radius: 12px; padding: 25px; width: 320px; text-align: center; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
+                <h3 style="color: #1e3c72; margin-top: 0; font-size: 1.4rem;">Plan Básico</h3>
+                <p style="font-size: 0.85rem; color: #64748b;">Ideal para despachos con hasta 5 RFCs de clientes.</p>
+                <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 15px 0;">
+                <p style="font-size: 1.8rem; font-weight: bold; color: #0f172a; margin: 5px 0;">$49 <span style="font-size: 0.9rem; font-weight: normal; color: #64748b;">MXN / mes</span></p>
+                <p style="font-size: 1.1rem; font-weight: bold; color: #16a34a; margin: 5px 0;">o $399 <span style="font-size: 0.8rem; font-weight: normal; color: #64748b;">MXN / año</span></p>
+                <p style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 20px;">Precios con IVA incluido</p>
+                
+                <a href="{link_bm}" target="_blank" style="display: block; background: #25d366; color: white; padding: 12px; text-decoration: none; border-radius: 8px; font-weight: bold; margin-bottom: 10px;">💬 Contratar Mensual ($49)</a>
+                <a href="{link_ba}" target="_blank" style="display: block; background: #128c7e; color: white; padding: 12px; text-decoration: none; border-radius: 8px; font-weight: bold;">💬 Contratar Anual ($399)</a>
+            </div>
+
+            <!-- PLAN ILIMITADO -->
+            <div style="background: #ffffff; border: 2px solid #2a5298; border-radius: 12px; padding: 25px; width: 320px; text-align: center; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); position: relative;">
+                <div style="position: absolute; top: -12px; right: 20px; background: #2a5298; color: white; padding: 3px 12px; border-radius: 10px; font-size: 0.75rem; font-weight: bold;">MÁS POPULAR</div>
+                <h3 style="color: #2a5298; margin-top: 0; font-size: 1.4rem;">Plan Ilimitado</h3>
+                <p style="font-size: 0.85rem; color: #64748b;">RFCs e importaciones masivas ilimitadas.</p>
+                <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 15px 0;">
+                <p style="font-size: 1.8rem; font-weight: bold; color: #0f172a; margin: 5px 0;">$99 <span style="font-size: 0.9rem; font-weight: normal; color: #64748b;">MXN / mes</span></p>
+                <p style="font-size: 1.1rem; font-weight: bold; color: #16a34a; margin: 5px 0;">o $999 <span style="font-size: 0.8rem; font-weight: normal; color: #64748b;">MXN / año</span></p>
+                <p style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 20px;">Precios con IVA incluido</p>
+                
+                <a href="{link_im}" target="_blank" style="display: block; background: #25d366; color: white; padding: 12px; text-decoration: none; border-radius: 8px; font-weight: bold; margin-bottom: 10px;">💬 Contratar Mensual ($99)</a>
+                <a href="{link_ia}" target="_blank" style="display: block; background: #128c7e; color: white; padding: 12px; text-decoration: none; border-radius: 8px; font-weight: bold;">💬 Contratar Anual ($999)</a>
+            </div>
+
+        </div>
+    </div>
+    """
 
 def procesar_carga_masiva_excel(email, plan, archivo_excel):
     if archivo_excel is None:
@@ -194,7 +238,6 @@ def procesar_carga_masiva_excel(email, plan, archivo_excel):
                 registros_omitidos += 1
                 continue
 
-            # Sustitución automática si ya existe el mismo periodo/ejercicio/RFC
             check_existente = supabase.table("saldos_iva").select("id").eq("usuario_email", email).eq("rfc", rfc_limpio).eq("periodo_mes", mes).eq("periodo_anio", anio).execute()
             if check_existente.data:
                 for reg_ext in check_existente.data:
@@ -439,7 +482,7 @@ def generar_pdf_expediente_fed_real(datos_saldo, logo_path=None):
         "Bajo protesta de decir verdad, el contribuyente y/o su representante legal manifiestan que la información y montos aquí asentados "
         "derivan de operaciones contables y fiscales reales, soportadas con Comprobantes Fiscales Digitales por Internet (CFDI) válidos, "
         "efectivamente pagados y bancarizados. Así mismo, se certifica que el saldo solicitado no ha sido objeto de compensación ni acreditamiento duplicado, "
-        "cumpliendo strictly con las disposiciones de los artículos 22 y 22-D del Código Fiscal de la Federación (CFF)."
+        "cumpliendo estrictamente con las disposiciones de los artículos 22 y 22-D del Código Fiscal de la Federación (CFF)."
     )
     story.append(Paragraph(texto_protesta, style_body))
     story.append(Spacer(1, 8))
@@ -560,50 +603,10 @@ def login_usuario(email, password):
 def inicializar_panel_usuario(email):
     rfcs = obtener_rfcs_unicos(email)
     val_inicial = rfcs[0] if rfcs else None
-    
-    link_basico_m = generar_link_whatsapp("Plan Básico Mensual ($49/mes)", email)
-    link_basico_a = generar_link_whatsapp("Plan Básico Anual ($399/año)", email)
-    link_ilimitado_m = generar_link_whatsapp("Plan Ilimitado Mensual ($99/mes)", email)
-    link_ilimitado_a = generar_link_whatsapp("Plan Ilimitado Anual ($999/año)", email)
-
-    html_pagos = f"""
-    <div style="padding: 10px;">
-        <h3 style="color: #1e3c72; text-align: center; margin-bottom: 20px;">Elije el Plan Ideal para tu Despacho o Empresa</h3>
-        <div style="display: flex; gap: 20px; justify-content: center; flex-wrap: wrap;">
-            
-            <!-- PLAN BÁSICO -->
-            <div style="background: #ffffff; border: 2px solid #cbd5e1; border-radius: 12px; padding: 25px; width: 300px; text-align: center; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
-                <h3 style="color: #1e3c72; margin-top: 0;">Plan Básico</h3>
-                <p style="font-size: 0.85rem; color: #64748b;">Para contadores con hasta 5 RFCs de clientes.</p>
-                <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 15px 0;">
-                <p style="font-size: 1.8rem; font-weight: bold; color: #0f172a; margin: 5px 0;">$49 <span style="font-size: 0.9rem; font-weight: normal; color: #64748b;">MXN / mes</span></p>
-                <p style="font-size: 1.1rem; font-weight: bold; color: #16a34a; margin: 5px 0;">o $399 <span style="font-size: 0.8rem; font-weight: normal; color: #64748b;">MXN / año</span></p>
-                <p style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 20px;">Precios con IVA incluido</p>
-                
-                <a href="{link_basico_m}" target="_blank" style="display: block; background: #25d366; color: white; padding: 10px; text-decoration: none; border-radius: 6px; font-weight: bold; margin-bottom: 10px;">💬 Contratar Mensual ($49)</a>
-                <a href="{link_basico_a}" target="_blank" style="display: block; background: #128c7e; color: white; padding: 10px; text-decoration: none; border-radius: 6px; font-weight: bold;">💬 Contratar Anual ($399)</a>
-            </div>
-
-            <!-- PLAN ILIMITADO -->
-            <div style="background: #ffffff; border: 2px solid #2a5298; border-radius: 12px; padding: 25px; width: 300px; text-align: center; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); position: relative;">
-                <div style="position: absolute; top: -12px; right: 20px; background: #2a5298; color: white; padding: 2px 10px; border-radius: 10px; font-size: 0.75rem; font-weight: bold;">MÁS POPULAR</div>
-                <h3 style="color: #2a5298; margin-top: 0;">Plan Ilimitado</h3>
-                <p style="font-size: 0.85rem; color: #64748b;">RFCs e importaciones ilimitadas para despachos grandes.</p>
-                <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 15px 0;">
-                <p style="font-size: 1.8rem; font-weight: bold; color: #0f172a; margin: 5px 0;">$99 <span style="font-size: 0.9rem; font-weight: normal; color: #64748b;">MXN / mes</span></p>
-                <p style="font-size: 1.1rem; font-weight: bold; color: #16a34a; margin: 5px 0;">o $999 <span style="font-size: 0.8rem; font-weight: normal; color: #64748b;">MXN / año</span></p>
-                <p style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 20px;">Precios con IVA incluido</p>
-                
-                <a href="{link_ilimitado_m}" target="_blank" style="display: block; background: #25d366; color: white; padding: 10px; text-decoration: none; border-radius: 6px; font-weight: bold; margin-bottom: 10px;">💬 Contratar Mensual ($99)</a>
-                <a href="{link_ilimitado_a}" target="_blank" style="display: block; background: #128c7e; color: white; padding: 10px; text-decoration: none; border-radius: 6px; font-weight: bold;">💬 Contratar Anual ($999)</a>
-            </div>
-
-        </div>
-    </div>
-    """
+    html_pagos_interno = generar_html_tabla_planes(email)
 
     upd = gr.update(choices=rfcs, value=val_inicial)
-    return upd, upd, upd, html_pagos
+    return upd, upd, upd, html_pagos_interno
 
 def actualizar_vista_resumen(email, rfc):
     if not rfc:
@@ -796,10 +799,10 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
     state_email = gr.State("")
     state_plan = gr.State("")
 
-    # 1. Panel de Login
+    # 1. Panel Público (Login + Tabla de Planes visible para nuevos clientes)
     with gr.Column(visible=True) as panel_login:
         gr.Markdown("""
-            <div style="max-width: 480px; margin: 40px auto; padding: 25px; background: white; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+            <div style="max-width: 480px; margin: 30px auto 15px auto; padding: 25px; background: white; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
                 <h2 style="color: #1e3c72; margin-bottom: 5px;">🏛️ Bóveda IVA Pro</h2>
                 <p style="color: #64748b; font-size: 0.9rem;">Plataforma inteligente de gestión y acreditamiento de IVA.</p>
             </div>
@@ -813,7 +816,10 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
                 lbl_msg = gr.Markdown()
             with gr.Column(scale=1): pass
 
-    # 2. Panel de Aplicación
+        # PLANES Y TARIFAS PÚBLICAS (Visibles sin iniciar sesión)
+        gr.HTML(value=generar_html_tabla_planes(""))
+
+    # 2. Panel Privado (App para usuarios autenticados)
     with gr.Column(visible=False) as panel_app:
         html_header = gr.HTML()
         
@@ -924,7 +930,7 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
                 lbl_eliminar_hist_res = gr.Markdown()
 
             with gr.TabItem("💳 Planes y Suscripciones"):
-                html_vista_pagos = gr.HTML()
+                html_vista_pagos_interno = gr.HTML()
 
     # --- EVENTOS Y VÍNCULOS ---
     btn_ingresar.click(
@@ -932,7 +938,7 @@ with gr.Blocks(title="Bóveda IVA Pro") as demo:
         outputs=[lbl_msg, panel_login, panel_app, html_header, state_email, state_plan]
     ).then(
         fn=inicializar_panel_usuario, inputs=[state_email],
-        outputs=[drop_rfc_resumen, drop_rfc_fifo, drop_rfc_hist, html_vista_pagos]
+        outputs=[drop_rfc_resumen, drop_rfc_fifo, drop_rfc_hist, html_vista_pagos_interno]
     )
 
     drop_rfc_resumen.change(
