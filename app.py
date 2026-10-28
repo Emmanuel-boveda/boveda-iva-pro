@@ -720,7 +720,7 @@ def inicializar_panel_usuario(email):
     val_inicial = rfcs[0] if rfcs else None
     html_pagos_interno = generar_html_tabla_planes("")
     upd = gr.update(choices=rfcs, value=val_inicial)
-    return upd, upd, upd, upd, html_pagos_interno
+    return upd, upd, upd, upd, upd, html_pagos_interno
 
 def actualizar_vista_resumen(email, rfc):
     if not rfc:
