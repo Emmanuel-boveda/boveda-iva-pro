@@ -24,18 +24,18 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 def get_supabase_client():
     if SUPABASE_URL and SUPABASE_KEY:
         try:
-            return create_client(_URL, _KEY)
+            return create_client(SUPABASE_URL, SUPABASE_KEY)
         except Exception:
             return None
     return None
 
- = get__client()
+supabase = get_supabase_client()
 
 # --- REGISTRO DE AUDITORÍA (LOGS) ---
 def registrar_log(email, accion, detalles):
     try:
-        if :
-            .table("logs_actividad").insert({
+        if supabase:
+            supabase.table("logs_actividad").insert({
                 "fecha_hora": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "usuario_email": email,
                 "accion": accion,
@@ -64,9 +64,9 @@ def calcular_codigo_invitacion(email_referidor):
 
 def cargar_saldos(email):
     try:
-        if not :
+        if not supabase:
             return pd.DataFrame()
-        response = .table("saldos_iva").select("*").eq("usuario_email", email).execute()
+        response = supabase.table("saldos_iva").select("*").eq("usuario_email", email).execute()
         data = response.data
         if not data:
             return pd.DataFrame()
@@ -83,9 +83,9 @@ def cargar_saldos(email):
 
 def cargar_historial(email):
     try:
-        if not :
+        if not supabase:
             return pd.DataFrame()
-        response = .table("historial_acreditamientos").select("*").eq("usuario_email", email).execute()
+        response = supabase.table("historial_acreditamientos").select("*").eq("usuario_email", email).execute()
         data = response.data
         if not data:
             return pd.DataFrame()
@@ -294,7 +294,7 @@ def procesar_carga_masiva_excel(email, plan, archivo_excel):
                 registros_omitidos += 1
                 continue
 
-            check_existente = .table("saldos_iva").select("id").eq("usuario_email", email).eq("rfc", rfc_limpio).eq("periodo_mes", mes).eq("periodo_anio", anio).execute()
+            check_existente = supabase.table("saldos_iva").select("id").eq("usuario_email", email).eq("rfc", rfc_limpio).eq("periodo_mes", mes).eq("periodo_anio", anio).execute()
             if check_existente.data:
                 for reg_ext in check_existente.data:
                     supabase.table("saldos_iva").delete().eq("id", reg_ext["id"]).execute()
@@ -723,7 +723,7 @@ def cambiar_contrasena(email, pass_actual, pass_nueva, pass_conf):
         
         supabase.table("usuarios_saas").update({"password": pass_nueva}).eq("email", email).execute()
         registrar_log(email, "CAMBIO_CONTRASEÑA", "El usuario actualizó su contraseña con éxito.")
-        return "✅ ¡Contraseña actualizada exitosamente!"
+        return "✅ ¡Contraseña actualizada exitosamente en Supabase!"
     except Exception as e:
         return f"❌ Error al actualizar contraseña: {e}"
 
@@ -1040,7 +1040,7 @@ with gr.Blocks(title="Bóveda IVA Pro", css=css) as demo:
                     txt_pass_actual = gr.Textbox(label="Contraseña Actual", type="password")
                     txt_pass_nueva = gr.Textbox(label="Nueva Contraseña (mínimo 6 caracteres)", type="password")
                     txt_pass_conf = gr.Textbox(label="Confirmar Nueva Contraseña", type="password")
-                btn_cambiar_pass = gr.Button("🔑 Actualizar Contraseña", variant="primary")
+                btn_cambiar_pass = gr.Button("🔑 Actualizar Contraseña en Supabase", variant="primary")
                 lbl_cambiar_pass_res = gr.Markdown()
 
             with gr.TabItem("🏛️ Módulo FED (Devoluciones)"):
