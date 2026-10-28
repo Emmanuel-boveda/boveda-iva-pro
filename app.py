@@ -149,7 +149,7 @@ def generar_html_tabla_planes(codigo_referido=""):
     ref_txt_mensual = f" (Código de referido ingresado: {cod_clean})" if cod_clean else ""
     ref_txt_anual = f" (Código de referido ingresado: {cod_clean} | SOLICITO PROMOCIÓN ANUAL: +1 Mes gratis para mí y +2 Meses gratis para el colega del código {cod_clean})." if cod_clean else ""
 
-    msg_bm = urllib.parse.quote(f"Hola, deseo contratar el Plan Básico Mensual ($49 MXN) de Bóveda IVA Pro.{ref_txt_mensual}")
+    msg_bm = urllib.parse.quote(f"Hola, deseo contratar el Plan Básico Mensual ($39 MXN) de Bóveda IVA Pro.{ref_txt_mensual}")
     msg_ba = urllib.parse.quote(f"Hola, deseo contratar el Plan Básico Anual ($399 MXN) de Bóveda IVA Pro.{ref_txt_anual}")
     msg_pm = urllib.parse.quote(f"Hola, deseo contratar el Plan Plus Mensual ($69 MXN) de Bóveda IVA Pro.{ref_txt_mensual}")
     msg_pa = urllib.parse.quote(f"Hola, deseo contratar el Plan Plus Anual ($699 MXN) de Bóveda IVA Pro.{ref_txt_anual}")
@@ -183,11 +183,11 @@ def generar_html_tabla_planes(codigo_referido=""):
                 <h3 style="color: #1e3c72; margin-top: 0; font-size: 1.2rem;">Plan Básico</h3>
                 <p style="font-size: 0.85rem; color: #64748b;">Hasta 5 RFCs de clientes.</p>
                 <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 12px 0;">
-                <p style="font-size: 1.6rem; font-weight: bold; color: #0f172a; margin: 5px 0;">$49 <span style="font-size: 0.85rem; font-weight: normal; color: #64748b;">MXN / mes</span></p>
+                <p style="font-size: 1.6rem; font-weight: bold; color: #0f172a; margin: 5px 0;">$39 <span style="font-size: 0.85rem; font-weight: normal; color: #64748b;">MXN / mes</span></p>
                 <p style="font-size: 1.0rem; font-weight: bold; color: #16a34a; margin: 5px 0;">o $399 <span style="font-size: 0.8rem; font-weight: normal; color: #64748b;">MXN / año</span></p>
                 <p style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 15px;">IVA incluido</p>
                 
-                <a href="{link_bm}" target="_blank" style="display: block; background: #25d366; color: white; padding: 10px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 0.9rem; margin-bottom: 8px;">💬 Contratar Mensual ($49)</a>
+                <a href="{link_bm}" target="_blank" style="display: block; background: #25d366; color: white; padding: 10px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 0.9rem; margin-bottom: 8px;">💬 Contratar Mensual ($39)</a>
                 <a href="{link_ba}" target="_blank" style="display: block; background: #128c7e; color: white; padding: 10px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 0.9rem;">💬 Contratar Anual ($399)</a>
             </div>
 
