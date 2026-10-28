@@ -207,7 +207,7 @@ def generar_html_tabla_planes(codigo_referido=""):
 
             <!-- PLAN ILIMITADO -->
             <div style="background: #ffffff; border: 2px solid #2a5298; border-radius: 12px; padding: 20px; width: 290px; text-align: center; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); position: relative;">
-                <div style="position: absolute; top: -11px; right: 20px; background: #2a5298; color: white; padding: 3px 10px; border-radius: 10px; font-size: 0.7rem; font-weight: bold;">MÁXIMO PODER</div>
+                <div style="position: absolute; top: -11px; right: 20px; background: #2a5298; color: white; padding: 3px 10px; border-radius: 10px; font-size: 0.7rem; font-weight: bold;">MÁS POPULAR</div>
                 <h3 style="color: #2a5298; margin-top: 0; font-size: 1.2rem;">Plan Ilimitado</h3>
                 <p style="font-size: 0.85rem; color: #64748b;">RFCs e importaciones ilimitadas.</p>
                 <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 12px 0;">
