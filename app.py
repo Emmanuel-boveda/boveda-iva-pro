@@ -143,7 +143,7 @@ def obtener_o_crear_plantilla_excel():
 
 PLANTILLA_EXCEL_PATH = obtener_o_crear_plantilla_excel()
 
-def generar_html_tabla_planes(codigo_referido=""):
+def generar_html_tabla_planes(codigo_referido="", total_rfcs=0):
     cod_clean = codigo_referido.strip().lower()
     
     ref_txt_mensual = f" (Código de referido ingresado: {cod_clean})" if cod_clean else ""
@@ -181,7 +181,7 @@ def generar_html_tabla_planes(codigo_referido=""):
             <!-- PLAN BÁSICO -->
             <div style="background: #ffffff; border: 2px solid #cbd5e1; border-radius: 12px; padding: 20px; width: 290px; text-align: center; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
                 <h3 style="color: #1e3c72; margin-top: 0; font-size: 1.2rem;">Plan Básico</h3>
-                <p style="font-size: 0.85rem; color: #64748b;">Hasta 5 RFCs de clientes.</p>
+                <p style="font-size: 0.85rem; color: #64748b;">Hasta 5 RFCs de clientes.<br><b>({total_rfcs} de 5 RFCs registrados)</b></p>
                 <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 12px 0;">
                 <p style="font-size: 1.6rem; font-weight: bold; color: #0f172a; margin: 5px 0;">$39 <span style="font-size: 0.85rem; font-weight: normal; color: #64748b;">MXN / mes</span></p>
                 <p style="font-size: 1.0rem; font-weight: bold; color: #16a34a; margin: 5px 0;">o $399 <span style="font-size: 0.8rem; font-weight: normal; color: #64748b;">MXN / año</span></p>
@@ -195,7 +195,7 @@ def generar_html_tabla_planes(codigo_referido=""):
             <div style="background: #ffffff; border: 2px solid #16a34a; border-radius: 12px; padding: 20px; width: 290px; text-align: center; box-shadow: 0 6px 10px -2px rgba(0,0,0,0.1); position: relative;">
                 <div style="position: absolute; top: -11px; right: 20px; background: #16a34a; color: white; padding: 3px 10px; border-radius: 10px; font-size: 0.7rem; font-weight: bold;">RECOMENDADO</div>
                 <h3 style="color: #16a34a; margin-top: 0; font-size: 1.2rem;">Plan Plus</h3>
-                <p style="font-size: 0.85rem; color: #64748b;">Hasta 10 RFCs de clientes.</p>
+                <p style="font-size: 0.85rem; color: #64748b;">Hasta 10 RFCs de clientes.<br><b>({total_rfcs} de 10 RFCs registrados)</b></p>
                 <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 12px 0;">
                 <p style="font-size: 1.6rem; font-weight: bold; color: #0f172a; margin: 5px 0;">$69 <span style="font-size: 0.85rem; font-weight: normal; color: #64748b;">MXN / mes</span></p>
                 <p style="font-size: 1.0rem; font-weight: bold; color: #16a34a; margin: 5px 0;">o $699 <span style="font-size: 0.8rem; font-weight: normal; color: #64748b;">MXN / año</span></p>
@@ -209,7 +209,7 @@ def generar_html_tabla_planes(codigo_referido=""):
             <div style="background: #ffffff; border: 2px solid #2a5298; border-radius: 12px; padding: 20px; width: 290px; text-align: center; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); position: relative;">
                 <div style="position: absolute; top: -11px; right: 20px; background: #2a5298; color: white; padding: 3px 10px; border-radius: 10px; font-size: 0.7rem; font-weight: bold;">🔥 MÁS POPULAR</div>
                 <h3 style="color: #2a5298; margin-top: 0; font-size: 1.2rem;">Plan Ilimitado</h3>
-                <p style="font-size: 0.85rem; color: #64748b;">RFCs e importaciones ilimitadas.</p>
+                <p style="font-size: 0.85rem; color: #64748b;">RFCs e importaciones ilimitadas.<br><b>({total_rfcs} RFCs registrados - Ilimitado)</b></p>
                 <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 12px 0;">
                 <p style="font-size: 1.6rem; font-weight: bold; color: #0f172a; margin: 5px 0;">$99 <span style="font-size: 0.85rem; font-weight: normal; color: #64748b;">MXN / mes</span></p>
                 <p style="font-size: 1.0rem; font-weight: bold; color: #16a34a; margin: 5px 0;">o $999 <span style="font-size: 0.8rem; font-weight: normal; color: #64748b;">MXN / año</span></p>
@@ -223,9 +223,12 @@ def generar_html_tabla_planes(codigo_referido=""):
     </div>
     """
 
-def actualizar_enlace_referido(codigo_input):
+def actualizar_enlace_referido(codigo_input, email_actual=""):
     cod_clean = codigo_input.strip().lower()
-    html_actualizado = generar_html_tabla_planes(cod_clean)
+    rfcs_actuales = obtener_rfcs_unicos(email_actual) if email_actual else []
+    total_rfcs = len(rfcs_actuales)
+    
+    html_actualizado = generar_html_tabla_planes(cod_clean, total_rfcs)
     if cod_clean:
         msg_info = f"✅ Código de referido activo: **{cod_clean}**. Al contratar un **Plan Anual**, se sumará **+1 mes gratis** para ti y **+2 meses gratis** para tu colega."
     else:
@@ -718,7 +721,8 @@ def cambiar_contrasena(email, pass_actual, pass_nueva, pass_conf):
 def inicializar_panel_usuario(email):
     rfcs = obtener_rfcs_unicos(email)
     val_inicial = rfcs[0] if rfcs else None
-    html_pagos_interno = generar_html_tabla_planes("")
+    total_rfcs = len(rfcs)
+    html_pagos_interno = generar_html_tabla_planes("", total_rfcs)
     upd = gr.update(choices=rfcs, value=val_inicial)
     return upd, upd, upd, upd, upd, html_pagos_interno
 
@@ -925,7 +929,7 @@ with gr.Blocks(title="Bóveda IVA Pro", css=css) as demo:
                 lbl_referido_info = gr.Markdown("ℹ️ Al contratar un paquete anual con un código de referido válido, recibes **+1 Mes Gratis** y tu colega recibe **+2 Meses Gratis**.")
             with gr.Column(scale=1): pass
 
-        html_tabla_planes_pub = gr.HTML(value=generar_html_tabla_planes(""))
+        html_tabla_planes_pub = gr.HTML(value=generar_html_tabla_planes("", 0))
 
     # 2. Panel Privado (App para usuarios autenticados)
     with gr.Column(visible=False) as panel_app:
@@ -1078,7 +1082,7 @@ with gr.Blocks(title="Bóveda IVA Pro", css=css) as demo:
     )
 
     txt_referido_input.change(
-        fn=actualizar_enlace_referido, inputs=[txt_referido_input],
+        fn=actualizar_enlace_referido, inputs=[txt_referido_input, state_email],
         outputs=[html_tabla_planes_pub, lbl_referido_info]
     )
 
