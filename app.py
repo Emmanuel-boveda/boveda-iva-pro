@@ -188,7 +188,7 @@ def generar_html_tabla_planes(codigo_referido=""):
                 <p style="font-size: 1.0rem; font-weight: bold; color: #16a34a; margin: 5px 0;">o $399 <span style="font-size: 0.8rem; font-weight: normal; color: #64748b;">MXN / año</span></p>
                 <p style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 15px;">IVA incluido</p>
                 
-                <a href="{link_bm}" target="_blank" style="display: block; background: #25d366; color: white; padding: 10px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 0.9rem; margin-bottom: 8px;">💬 Contratar Mensual ($49)</a>
+                <a href="{link_bm}" target="_blank" style="display: block; background: #25d366; color: white; padding: 10px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 0.9rem; margin-bottom: 8px;">💬 Contratar Mensual ($39)</a>
                 <a href="{link_ba}" target="_blank" style="display: block; background: #128c7e; color: white; padding: 10px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 0.9rem;">💬 Contratar Anual ($399)</a>
             </div>
 
